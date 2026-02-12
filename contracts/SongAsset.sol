@@ -90,10 +90,11 @@ contract SongAsset is ERC721, Ownable {
     function addCollaborator(uint256 tokenId, address payable wallet, uint8 splitPercentage) public {
 
 
-         /* Questi check servono per far si che i collaboratori possano essere aggiunti solo nella fase di collaborate e solo dall'owner
+        //Questi check servono per far si che i collaboratori possano essere aggiunti solo nella fase di collaborate e solo dall'owner
         
         // 1. CHECK FASE: Possiamo modificare SOLO se siamo in fase Collaborate
         // Questo è il cuore della sicurezza temporale
+        
         require(
         _songs[tokenId].currentState == LifecycleState.Collaborate, 
         "Spyral: Cannot edit after Collaborate phase"
@@ -109,7 +110,7 @@ contract SongAsset is ERC721, Ownable {
         // 3. CHECK LOGICO: Evitiamo percentuali assurde
         require(splitPercentage > 0 && splitPercentage <= 100, "Invalid percentage");
     
-        */
+        
 
         // MODIFICA 2: _isApprovedOrOwner non esiste più.
         // Si usa _checkAuthorized. E NON va dentro il 'require' (fa revert da solo).
@@ -151,8 +152,13 @@ contract SongAsset is ERC721, Ownable {
 
 
         require(
+<<<<<<< HEAD
             block.timestamp >= song.lastStateChange + requiredWait,
             "Errore: Non e ancora trascorso il tempo necessario per questo stato"
+=======
+            block.timestamp >= song.lastStateChange + requiredWait, 
+            "Errore: Non e' ancora trascorso il tempo necessario per questo stato"
+>>>>>>> 477411ec99395e6d665e419e825e4f8291b3ab18
         );
 
         //3. Logica di transizione
