@@ -89,6 +89,28 @@ contract SongAsset is ERC721, Ownable {
     //Sono immutabili
     function addCollaborator(uint256 tokenId, address payable wallet, uint8 splitPercentage) public {
 
+
+         /* Questi check servono per far si che i collaboratori possano essere aggiunti solo nella fase di collaborate e solo dall'owner
+        
+        // 1. CHECK FASE: Possiamo modificare SOLO se siamo in fase Collaborate
+        // Questo è il cuore della sicurezza temporale
+        require(
+        _songs[tokenId].currentState == LifecycleState.Collaborate, 
+        "Spyral: Cannot edit after Collaborate phase"
+        );
+
+        // 2. CHECK OWNER: Stretto (Niente operatori, niente marketplace)
+        // Usiamo ownerOf(tokenId) direttamente.
+        require(
+        ownerOf(tokenId) == msg.sender, 
+        "Spyral: Only the strict owner can add collaborators"
+        );
+
+        // 3. CHECK LOGICO: Evitiamo percentuali assurde
+        require(splitPercentage > 0 && splitPercentage <= 100, "Invalid percentage");
+    
+        */
+
         // MODIFICA 2: _isApprovedOrOwner non esiste più.
         // Si usa _checkAuthorized. E NON va dentro il 'require' (fa revert da solo).
         address owner = ownerOf(tokenId);
@@ -112,6 +134,12 @@ contract SongAsset is ERC721, Ownable {
         if (song.currentState == LifecycleState.Upload) {
         song.currentState = LifecycleState.Collaborate;
         } else if (song.currentState == LifecycleState.Collaborate) {
+
+        // --- BLOCCO DI SICUREZZA ---
+        // Qui stiamo chiudendo il team. È un'azione critica.
+        // Impediamo che lo faccia un semplice "approved".
+        require(msg.sender == owner, "Spyral: Only owner can close Collaboration phase");
+        
         song.currentState = LifecycleState.Register;
         } else if (song.currentState == LifecycleState.Register) {
         song.currentState = LifecycleState.Publish;
