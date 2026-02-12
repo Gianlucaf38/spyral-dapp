@@ -152,13 +152,8 @@ contract SongAsset is ERC721, Ownable {
 
 
         require(
-<<<<<<< HEAD
             block.timestamp >= song.lastStateChange + requiredWait,
             "Errore: Non e ancora trascorso il tempo necessario per questo stato"
-=======
-            block.timestamp >= song.lastStateChange + requiredWait, 
-            "Errore: Non e' ancora trascorso il tempo necessario per questo stato"
->>>>>>> 477411ec99395e6d665e419e825e4f8291b3ab18
         );
 
         //3. Logica di transizione
