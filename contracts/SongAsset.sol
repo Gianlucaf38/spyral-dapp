@@ -8,17 +8,34 @@ import "@openzeppelin/contracts/utils/Strings.sol";
 contract SongAsset is ERC721, Ownable {
 
     using Strings for uint256;//permette di utilizzare metodi Strings(di OpenZeppelin) su uint256
+    //dice al contratto di "attaccare" tutte le funzioni della libreria Strings 
+    //di OpenZeppelin al tipo di dato uint256. Questo permette di usare la sintassi tuoNumero.toString() per 
+    //trasformare un ID numerico in testo.
 
     // 1. Lifecycle State Machine
     enum LifecycleState { Upload, Collaborate, Register, Publish, Revenue }
 
+    //Per quanto riguarda la struct Song ci si è basati su delle scelte architetturali volte a ridurre il consumo di gas
+    //cercando di evitare ridondanza di informazioni
+
     struct Song {
-        uint256 tokenId;
+        //uint256 tokenId; RIMOZIONE 1: io accedo all'oggetto Song tramite il mapping(uint256 => Song) private _songs, per cui non
+        //ha senso salvare nel valore di un "dizionario" la chiave del valore stesso
         LifecycleState currentState;
-        address owner;
-        // Altri dati...
+        //address owner; RIMOZIONE 2: L'owner è già gestito di default dalla libreria OpenZeppelin che possiede un mapping del tipo 
+        //mapping(uint256 => address) private _owners, è tutto già gestito dalla funzione ownerOf(tokenId). Inoltre questo attributo 
+        //aggiunge un grado di pericolosità in quanto se nella logica del programma si omette il trasferimento di questa proprietà potrebbe
+        //esserci incoerenza tra i possessori di OpenZeppelin e quelli specificati da noi, arriviamo ad avere una "Single Source of Truth"
+        // Altri dati...Procediamo con l'aggiunta efficiente di attributi
+        uint64 lastStateChange; // Timestamp ultimo cambio stato, lo possiamo utilizzare per gestire temporalmente i cambi di stato
+        uint128 totalRevenue; // Contatore revenue (basta per cifre enormi), serve a calcolare i guadagni della canzone per poterli ripartire tra i collaboratori
+        bytes32 audioHash; // Checksum del file audio (SHA-256 o Keccak), questo è relativo all'integrità del file originale, permette di
+        //certificare che il file a cui associamo l'NFT rimane sempre lo stesso e non hanno potuto ingannarci con un file fittizio o comunque danneggiato 
+
+        //Ethereum salva per slot di 32 byte a cui accede direttamente con una sola gas fee, quindi in questo modo riusciamo ad acceder a due soli slot
     }
     mapping(uint256 => Song) private _songs;
+    uint256 private _nextTokenId;
 
     //costruttore del contratto, che inizializza il nome e il simbolo del token NFT. 
     //In questo caso, il nome è "Spyral Song Asset" e il simbolo è "SPYRAL". Questi valori vengono passati al costruttore di ERC721 per configurare il token.
@@ -28,20 +45,35 @@ contract SongAsset is ERC721, Ownable {
         Ownable(initialOwner)
         {}
 
+
     //questa funzione si occupa di mintare un nuovo token per una canzone, assegnandolo a un proprietario specificato. 
     //Viene utilizzata solo dal proprietario del contratto (ad esempio, l'amministratore) per creare nuovi asset musicali. 
     //Ogni volta che viene chiamata, genera un nuovo ID univoco per la canzone, la memorizza nella mappatura _songs e restituisce l'ID del token appena creato.
-    uint256 private _nextTokenId = 1; // Iniziamo da 1
-    function mintSong(address owner) public onlyOwner returns (uint256) {
-        //id con contatore
+
+    /*
+    SCELTA DEL TOKEN ID:
+    1. Optare per un token id randomico in questo contesto potrebbe sembrare una scelta ottimale per una questione di privacy, tuttavia avremmo seri problemi
+    sia dal punto di vista dei costi in gas per la funzione di hashing, sia per accedere a questi token, in quanto ad esempio non potremmo fare accessi sequenzial
+    2. Analizzando l'approccio industriale di alcuni grandi aziende nel mondo degli NFT abbiamo riscontrato spesso un utilizzo di token sequenziali, per cui la nostra scelta
+    è ricaduta su di essi. Inoltre con Solidity 0.8+ (che gestisce l'overflow matematico nativamente), usare una libreria esterna solo per fare +1 è uno spreco 
+    di gas e complessità inutile.
+    */ 
+ 
+    function mintSong(address to, bytes32 _audioHash) public onlyOwner returns (uint256) {
         uint256 newItemId = _nextTokenId;
-        _nextTokenId++; // Incrementiamo per il prossimo
-        _safeMint(owner, newItemId);
+        unchecked { _nextTokenId++; } //Dalla versione 0.8 di Solidity, il compilatore controlla sempre se i numeri "sforano" (overflow). Questo controllo costa un po' di gas. 
+        //Usare unchecked su un contatore uint256 che incrementa di 1 alla volta non è un problema perchè è computazionalmente impossibile
+        //mandarlo in overflow prima che il sole esploda (tra circa 5 miliardi di anni)
+
+        _safeMint(to, newItemId); //per il minting possiamo usare la funzione sicura dello standard ERC721
+
         _songs[newItemId] = Song({
-            tokenId: newItemId,
-            currentState: LifecycleState.Upload,
-            owner: owner
-            });
+            currentState: LifecycleState.Upload, //Stato iniziale
+            lastStateChange: uint64(block.timestamp), //prendo il timestamp dal blocco in cui è stata validata la transazione relativa alla generazione del token
+            totalRevenue: 0, //Si parte da zero guadagni
+            audioHash: _audioHash //L'hash è computazionalmente troppo costoso da fare on chain con file di GB, per questo motivo lo calcoliamo nel frontend che andrò poi
+            //a richiamare la funzione di minting passando direttamente l'hash già calcolato
+        });
 
         return newItemId;
     }
