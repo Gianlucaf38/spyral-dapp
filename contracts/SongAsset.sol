@@ -98,16 +98,41 @@ contract SongAsset is ERC721, Ownable {
         _collaborators[tokenId].push(Collaborator(wallet, splitPercentage));
     }
 
+    //utilizziamo funzione per definire il tempo di attesa tra i cambi di stato
+    // NOTA questa funzione è puramente esemplificativa, in un contesto reale si potrebbe voler gestire in modo più dinamico o complesso i tempi di attesa, 
+    //magari con parametri configurabili o basati su eventi specifici.
+    // inoltre si potrebbe voler aggiungere un meccanismo di "emergenza" per bypassare i tempi di attesa in caso di necessità,
+    // oppure per modificare i tempi di attesa in base a determinate condizioni (ad esempio, se la canzone ha raggiunto un certo numero di collaboratori o di visualizzazioni).
+    function getCooldownForState(LifecycleState state) public pure returns (uint64) {
+        if (state == LifecycleState.Upload) return 0;           // Immediato
+        if (state == LifecycleState.Collaborate) return 1 days; // 24 ore
+        if (state == LifecycleState.Register) return 7 days;    // 1 settimana
+        if (state == LifecycleState.Publish) return 2 days;     // 48 ore
+        return 0;
+    }
 
-    event StateChanged(uint256 indexed tokenId, LifecycleState newState);
+    event StateChanged(uint256 indexed tokenId, LifecycleState oldState, LifecycleState newState, uint64 timestamp);
     //il contratto consente al proprietario di un token di avanzare lo stato della canzone attraverso le fasi del ciclo di vita (Upload, Collaborate, Register, Publish, Revenue).
     function advanceState(uint256 tokenId) public {
 
         // MODIFICA 3: Stessa cosa qui. Sostituito _isApprovedOrOwner con la logica v5
+
+        //1. controllo che il token esista e che chi chiama la funzione sia autorizzato (proprietario o approvato)
         address owner = ownerOf(tokenId);
         _checkAuthorized(owner, msg.sender, tokenId);
         Song storage song = _songs[tokenId];
-        // Logica di transizione
+
+        //2. controllo che sia passato abbastanza tempo dall'ultimo cambio di stato per evitare abusi
+        LifecycleState currentState = song.currentState;
+        uint64 requiredWait = getCooldownForState(currentState);
+
+
+        require(
+            block.timestamp >= song.lastStateChange + requiredWait,
+            "Errore: Non è ancora trascorso il tempo necessario per questo stato"
+        );
+
+        //3. Logica di transizione
 
         if (song.currentState == LifecycleState.Upload) {
         song.currentState = LifecycleState.Collaborate;
@@ -117,9 +142,15 @@ contract SongAsset is ERC721, Ownable {
         song.currentState = LifecycleState.Publish;
         } else if (song.currentState == LifecycleState.Publish) {
         song.currentState = LifecycleState.Revenue;
+        }else {
+            // Se è già in Revenue, fermiamo tutto e restituiamo il gas residuo
+            revert("Canzone gia nello stato finale");
         }
 
-        emit StateChanged(tokenId, song.currentState);
+        // 4. Aggiorniamo il timestamp per il prossimo scatto
+        song.lastStateChange = uint64(block.timestamp);
+
+        emit StateChanged(tokenId, currentState, song.currentState, song.lastStateChange);
     }
     //NFT cambia aspetto in base a dove si trova nel ciclo di vita. 
     //Il metodo tokenURI restituisce un URI diverso a seconda dello stato attuale della canzone, permettendo di visualizzare metadati e immagini differenti per ogni fase del ciclo di vita.
