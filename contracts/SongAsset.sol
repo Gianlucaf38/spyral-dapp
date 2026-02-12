@@ -22,7 +22,11 @@ contract SongAsset is ERC721, Ownable {
 
     //costruttore del contratto, che inizializza il nome e il simbolo del token NFT. 
     //In questo caso, il nome è "Spyral Song Asset" e il simbolo è "SPYRAL". Questi valori vengono passati al costruttore di ERC721 per configurare il token.
-    constructor() ERC721("Spyral Song Asset", "SPYRAL") {}
+    // MODIFICA 1: Ownable ora vuole l'indirizzo iniziale tra parentesi
+    constructor(address initialOwner) 
+        ERC721("Spyral Song Asset", "SPYRAL") 
+        Ownable(initialOwner)
+        {}
 
     //questa funzione si occupa di mintare un nuovo token per una canzone, assegnandolo a un proprietario specificato. 
     //Viene utilizzata solo dal proprietario del contratto (ad esempio, l'amministratore) per creare nuovi asset musicali. 
@@ -53,8 +57,10 @@ contract SongAsset is ERC721, Ownable {
     //Sono immutabili
     function addCollaborator(uint256 tokenId, address payable wallet, uint8 splitPercentage) public {
 
-        // Richiede che solo il proprietario della canzone possa aggiungere collaboratori
-        require(_isApprovedOrOwner(msg.sender, tokenId), "Not the owner");
+        // MODIFICA 2: _isApprovedOrOwner non esiste più.
+        // Si usa _checkAuthorized. E NON va dentro il 'require' (fa revert da solo).
+        address owner = ownerOf(tokenId);
+        _checkAuthorized(owner, msg.sender, tokenId);
 
         // Aggiungi logica per controllare che la somma delle percentuali non superi 100
         _collaborators[tokenId].push(Collaborator(wallet, splitPercentage));
@@ -65,7 +71,9 @@ contract SongAsset is ERC721, Ownable {
     //il contratto consente al proprietario di un token di avanzare lo stato della canzone attraverso le fasi del ciclo di vita (Upload, Collaborate, Register, Publish, Revenue).
     function advanceState(uint256 tokenId) public {
 
-        require(_isApprovedOrOwner(msg.sender, tokenId), "Not the owner");
+        // MODIFICA 3: Stessa cosa qui. Sostituito _isApprovedOrOwner con la logica v5
+        address owner = ownerOf(tokenId);
+        _checkAuthorized(owner, msg.sender, tokenId);
         Song storage song = _songs[tokenId];
         // Logica di transizione
 
@@ -85,17 +93,20 @@ contract SongAsset is ERC721, Ownable {
     //Il metodo tokenURI restituisce un URI diverso a seconda dello stato attuale della canzone, permettendo di visualizzare metadati e immagini differenti per ogni fase del ciclo di vita.
     function tokenURI(uint256 tokenId) public view override returns (string
     memory) {
-        require(_exists(tokenId), "ERC721Metadata: URI query for nonexistent token");
+        // MODIFICA 4: _exists non esiste più. Si usa _requireOwned per controllare se esiste.
+        _requireOwned(tokenId);
+
         LifecycleState state = _songs[tokenId].currentState;
         string memory baseURI = "ipfs://<YOUR_METADATA_FOLDER_CID>/"; 
         // Sostituisci con il tuo CID
         // Restituisce un file JSON diverso per ogni stato
+    // Ho usato string.concat che è più moderno, ma bytes.concat va bene uguale
         if (state == LifecycleState.Upload) {
-        return bytes.concat(bytes(baseURI), bytes("upload.json"));
+            return string(abi.encodePacked(baseURI, "upload.json"));
         } else if (state == LifecycleState.Collaborate) {
-        return bytes.concat(bytes(baseURI), bytes("collaborate.json"));
+            return string(abi.encodePacked(baseURI, "collaborate.json"));
         }
-        // ... e così via per gli altri stati
-        return bytes.concat(bytes(baseURI), bytes("default.json"));
+        
+        return string(abi.encodePacked(baseURI, "default.json"));
     }
 }
