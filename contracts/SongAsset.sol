@@ -138,9 +138,10 @@ contract SongAsset is ERC721, Ownable {
     //il contratto consente al proprietario di un token di avanzare lo stato della canzone attraverso le fasi del ciclo di vita (Upload, Collaborate, Register, Publish, Revenue).
     function advanceState(uint256 tokenId) public {
 
-        // MODIFICA 3: Stessa cosa qui. Sostituito _isApprovedOrOwner con la logica v5
 
         //1. controllo che il token esista e che chi chiama la funzione sia autorizzato (proprietario o approvato)
+        
+        // MODIFICA 3: Stessa cosa qui. Sostituito _isApprovedOrOwner con la logica v5
         address owner = ownerOf(tokenId);
         _checkAuthorized(owner, msg.sender, tokenId);
         Song storage song = _songs[tokenId];
@@ -151,8 +152,8 @@ contract SongAsset is ERC721, Ownable {
 
 
         require(
-            block.timestamp >= song.lastStateChange + requiredWait, 
-            "Errore: Non e' ancora trascorso il tempo necessario per questo stato"
+            block.timestamp >= song.lastStateChange + requiredWait,
+            "Errore: Non e ancora trascorso il tempo necessario per questo stato"
         );
 
         //3. Logica di transizione
@@ -182,23 +183,35 @@ contract SongAsset is ERC721, Ownable {
         emit StateChanged(tokenId, currentState, song.currentState, song.lastStateChange);
     }
     //NFT cambia aspetto in base a dove si trova nel ciclo di vita. 
+        // La variabile che contiene il CID della cartella IPFS (es: ipfs://Qm.../)
+    string private _baseTokenURI = "ipfs://QmDefaultHash/"; // Valore di default
+
+    // Funzione per aggiornare il CID della cartella (solo il proprietario può farlo)
+    function setBaseURI(string memory newBaseURI) public onlyOwner {
+        _baseTokenURI = newBaseURI;
+    }
     //Il metodo tokenURI restituisce un URI diverso a seconda dello stato attuale della canzone, permettendo di visualizzare metadati e immagini differenti per ogni fase del ciclo di vita.
-    function tokenURI(uint256 tokenId) public view override returns (string
-    memory) {
+    function tokenURI(uint256 tokenId) public view override returns (string memory) {
         // MODIFICA 4: _exists non esiste più. Si usa _requireOwned per controllare se esiste.
         _requireOwned(tokenId);
 
         LifecycleState state = _songs[tokenId].currentState;
-        string memory baseURI = "ipfs://<YOUR_METADATA_FOLDER_CID>/"; 
-        // Sostituisci con il tuo CID
+        string memory baseURI = _baseTokenURI;
         // Restituisce un file JSON diverso per ogni stato
-    // Ho usato string.concat che è più moderno, ma bytes.concat va bene uguale
+        // Ho usato string.concat che è più moderno, ma bytes.concat va bene uguale
+
         if (state == LifecycleState.Upload) {
-            return string(abi.encodePacked(baseURI, "upload.json"));
+            return string.concat(baseURI, "upload.json");
         } else if (state == LifecycleState.Collaborate) {
-            return string(abi.encodePacked(baseURI, "collaborate.json"));
-        }
+            return string.concat(baseURI, "collaborate.json");
+        } else if (state == LifecycleState.Register) {
+            return string.concat(baseURI, "register.json");
+        } else if (state == LifecycleState.Publish) {
+            return string.concat(baseURI, "publish.json");
+        } else if (state == LifecycleState.Revenue) {
+            return string.concat(baseURI, "revenue.json");
+        } 
         
-        return string(abi.encodePacked(baseURI, "default.json"));
+        return string.concat(baseURI, "default.json");
     }
 }
