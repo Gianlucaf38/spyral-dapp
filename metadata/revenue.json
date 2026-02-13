@@ -1,0 +1,15 @@
+{
+"name": "Song Title - Revenue Phase",
+"description": "This song is in the Revenue phase of its lifecycle.",
+"image": "ipfs://bafybeice35pax2yc3pcwjdh445g7eol7lag4z4aalpgquv6bpdjdz6m7ja/revenue.jpg",
+"attributes": [
+{
+"trait_type": "Lifecycle State",
+"value": "Revenue"
+},
+{
+"trait_type": "Progress",
+"value": "100%"
+}
+]
+}

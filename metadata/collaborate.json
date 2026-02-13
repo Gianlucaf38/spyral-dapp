@@ -1,0 +1,15 @@
+{
+"name": "Song Title - Collaborate Phase",
+"description": "This song is in the Collaborate phase of its lifecycle.",
+"image": "ipfs://bafybeice35pax2yc3pcwjdh445g7eol7lag4z4aalpgquv6bpdjdz6m7ja/collaborate.jpg",
+"attributes": [
+{
+"trait_type": "Lifecycle State",
+"value": "Collaborate"
+},
+{
+"trait_type": "Progress",
+"value": "40%"
+}
+]
+}

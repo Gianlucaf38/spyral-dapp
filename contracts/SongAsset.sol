@@ -184,7 +184,7 @@ contract SongAsset is ERC721, Ownable {
     }
     //NFT cambia aspetto in base a dove si trova nel ciclo di vita. 
         // La variabile che contiene il CID della cartella IPFS (es: ipfs://Qm.../)
-    string private _baseTokenURI = "ipfs://QmDefaultHash/"; // Valore di default
+    string private _baseTokenURI = "ipfs://bafybeibgysnhxqlamsrxmzfbnifws3j2z5npilhm26xzvabzpalbbxkvkq/"; // Valore di default
 
     // Funzione per aggiornare il CID della cartella (solo il proprietario può farlo)
     function setBaseURI(string memory newBaseURI) public onlyOwner {
