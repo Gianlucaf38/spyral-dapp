@@ -178,7 +178,7 @@ contract SongAsset is ERC721, Ownable {
         }
 
         // 4. Aggiorniamo il timestamp per il prossimo scatto
-        song.lastStateChange = uint64(block.timestamp);
+        song.lastStateChange = uint64(block.timestamp); //
 
         emit StateChanged(tokenId, currentState, song.currentState, song.lastStateChange);
     }
