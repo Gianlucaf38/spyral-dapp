@@ -1,133 +1,96 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
+
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 
-//contratto ereditato da ERC721 di OpenZeppelin, che fornisce tutte le funzionalità standard per un token non fungibile (NFT), e da Ownable, che consente di gestire i permessi di accesso al contratto.
+/// @title Spyral Song Asset - Dynamic NFT per la gestione del ciclo di vita musicale
+/// @author @gianlucaaf @gnico02
+/// @notice Gestisce il ciclo di vita di una canzone (DNFT) dalla creazione alla ridistribuzione dei proventi.
+/// @dev Eredita da ERC721 (OpenZeppelin v5.x) e Ownable. Ottimizzato per il risparmio di gas e "Single Source of Truth".
 contract SongAsset is ERC721, Ownable {
+    using Strings for uint256;
 
-    using Strings for uint256;//permette di utilizzare metodi Strings(di OpenZeppelin) su uint256
-    //dice al contratto di "attaccare" tutte le funzioni della libreria Strings 
-    //di OpenZeppelin al tipo di dato uint256. Questo permette di usare la sintassi tuoNumero.toString() per 
-    //trasformare un ID numerico in testo.
-
-    // 1. Lifecycle State Machine
+    /// @notice Stati possibili del ciclo di vita di un asset musicale.
     enum LifecycleState { Upload, Collaborate, Register, Publish, Revenue }
 
-    //Per quanto riguarda la struct Song ci si è basati su delle scelte architetturali volte a ridurre il consumo di gas
-    //cercando di evitare ridondanza di informazioni
-
+    /// @dev Struttura ottimizzata per occupare esattamente 2 slot da 32 byte (gas optimization).
     struct Song {
-        //uint256 tokenId; RIMOZIONE 1: io accedo all'oggetto Song tramite il mapping(uint256 => Song) private _songs, per cui non
-        //ha senso salvare nel valore di un "dizionario" la chiave del valore stesso
-        LifecycleState currentState;
-        //address owner; RIMOZIONE 2: L'owner è già gestito di default dalla libreria OpenZeppelin che possiede un mapping del tipo 
-        //mapping(uint256 => address) private _owners, è tutto già gestito dalla funzione ownerOf(tokenId). Inoltre questo attributo 
-        //aggiunge un grado di pericolosità in quanto se nella logica del programma si omette il trasferimento di questa proprietà potrebbe
-        //esserci incoerenza tra i possessori di OpenZeppelin e quelli specificati da noi, arriviamo ad avere una "Single Source of Truth"
-        // Altri dati...Procediamo con l'aggiunta efficiente di attributi
-        uint64 lastStateChange; // Timestamp ultimo cambio stato, lo possiamo utilizzare per gestire temporalmente i cambi di stato
-        uint128 totalRevenue; // Contatore revenue (basta per cifre enormi), serve a calcolare i guadagni della canzone per poterli ripartire tra i collaboratori
-        bytes32 audioHash; // Checksum del file audio (SHA-256 o Keccak), questo è relativo all'integrità del file originale, permette di
-        //certificare che il file a cui associamo l'NFT rimane sempre lo stesso e non hanno potuto ingannarci con un file fittizio o comunque danneggiato 
-
-        //Ethereum salva per slot di 32 byte a cui accede direttamente con una sola gas fee, quindi in questo modo riusciamo ad acceder a due soli slot
+        LifecycleState currentState; // Slot 1 (8 bit)
+        uint64 lastStateChange;      // Slot 1 (64 bit) - Timestamp dell'ultima transizione
+        uint128 totalRevenue;        // Slot 1 (128 bit) - Sufficiente per cifre astronomiche (10^38)
+        bytes32 audioHash;           // Slot 2 (256 bit) - Hash per l'integrità del file audio
     }
-    mapping(uint256 => Song) private _songs;
-    uint256 private _nextTokenId;
 
-    //costruttore del contratto, che inizializza il nome e il simbolo del token NFT. 
-    //In questo caso, il nome è "Spyral Song Asset" e il simbolo è "SPYRAL". Questi valori vengono passati al costruttore di ERC721 per configurare il token.
-    // MODIFICA 1: Ownable ora vuole l'indirizzo iniziale tra parentesi
+    /// @dev Collaboratore e relativa quota di royalty.
+    struct Collaborator {
+        address payable wallet;
+        uint8 splitPercentage; // Percentuale intera (es. 25 = 25%)
+    }
+
+    mapping(uint256 => Song) private _songs;
+    mapping(uint256 => Collaborator[]) private _collaborators;
+    uint256 private _nextTokenId;
+    string private _baseTokenURI = "https://api.spyral.com/metadata/";
+
+    /// @notice Emesso quando una canzone cambia stato nel ciclo di vita.
+    event StateChanged(uint256 indexed tokenId, LifecycleState oldState, LifecycleState newState, uint64 timestamp);
+
+    /// @dev Inizializza il contratto impostando il nome, il simbolo e l'owner iniziale.
+    /// @param initialOwner Indirizzo che avrà i poteri di amministrazione (minter).
     constructor(address initialOwner) 
         ERC721("Spyral Song Asset", "SPYRAL") 
         Ownable(initialOwner)
-        {}
+    {}
 
-
-    //questa funzione si occupa di mintare un nuovo token per una canzone, assegnandolo a un proprietario specificato. 
-    //Viene utilizzata solo dal proprietario del contratto (ad esempio, l'amministratore) per creare nuovi asset musicali. 
-    //Ogni volta che viene chiamata, genera un nuovo ID univoco per la canzone, la memorizza nella mappatura _songs e restituisce l'ID del token appena creato.
-
-    /*
-    SCELTA DEL TOKEN ID:
-    1. Optare per un token id randomico in questo contesto potrebbe sembrare una scelta ottimale per una questione di privacy, tuttavia avremmo seri problemi
-    sia dal punto di vista dei costi in gas per la funzione di hashing, sia per accedere a questi token, in quanto ad esempio non potremmo fare accessi sequenzial
-    2. Analizzando l'approccio industriale di alcuni grandi aziende nel mondo degli NFT abbiamo riscontrato spesso un utilizzo di token sequenziali, per cui la nostra scelta
-    è ricaduta su di essi. Inoltre con Solidity 0.8+ (che gestisce l'overflow matematico nativamente), usare una libreria esterna solo per fare +1 è uno spreco 
-    di gas e complessità inutile.
-    */ 
- 
+    /// @notice Crea un nuovo NFT musicale associato a un file audio.
+    /// @dev Utilizza ID sequenziali per minimizzare i costi di scrittura e semplificare l'iterazione.
+    /// @param to Indirizzo che riceverà l'NFT (primo collaboratore al 100%).
+    /// @param _audioHash Hash del file calcolato off-chain per risparmiare gas.
+    /// @return newItemId L'ID univoco del token appena generato.
     function mintSong(address to, bytes32 _audioHash) public onlyOwner returns (uint256) {
         uint256 newItemId = _nextTokenId;
-        unchecked { _nextTokenId++; } //Dalla versione 0.8 di Solidity, il compilatore controlla sempre se i numeri "sforano" (overflow). Questo controllo costa un po' di gas. 
-        //Usare unchecked su un contatore uint256 che incrementa di 1 alla volta non è un problema perchè è computazionalmente impossibile
-        //mandarlo in overflow prima che il sole esploda (tra circa 5 miliardi di anni)
+        
+        // @dev unchecked safe qui: uint256 non può andare in overflow con incrementi unitari
+        unchecked { _nextTokenId++; } 
 
-        _safeMint(to, newItemId); //per il minting possiamo usare la funzione sicura dello standard ERC721
+        _safeMint(to, newItemId);
 
         _songs[newItemId] = Song({
-            currentState: LifecycleState.Upload, //Stato iniziale
-            lastStateChange: uint64(block.timestamp), //prendo il timestamp dal blocco in cui è stata validata la transazione relativa alla generazione del token
-            totalRevenue: 0, //Si parte da zero guadagni
-            audioHash: _audioHash //L'hash è computazionalmente troppo costoso da fare on chain con file di GB, per questo motivo lo calcoliamo nel frontend che andrò poi
-            //a richiamare la funzione di minting passando direttamente l'hash già calcolato
+            currentState: LifecycleState.Upload,
+            lastStateChange: uint64(block.timestamp),
+            totalRevenue: 0,
+            audioHash: _audioHash
         });
         
-        //Inizializziamo l'owner  come primo collaboratore con il 100% delle quote (altrimenti non potremmo tenere traccia delle quote associate)
         _collaborators[newItemId].push(Collaborator(payable(to), 100));
 
         return newItemId;
     }
 
-    struct Collaborator {
-        address payable wallet;
-        uint8 splitPercentage; // Percentuale di royalty (es. 25 per 25%)
-    }
-
-    mapping(uint256 => Collaborator[]) private _collaborators;
-
-    //Il contratto tiene traccia di chi ha lavorato alla canzone e in che misura. I collaboratori possono essere aggiunti solo dal proprietario del token, e ogni collaboratore ha una percentuale di royalty associata.
-    //Sono immutabili
+    /// @notice Aggiunge un collaboratore e diluisce la quota del proprietario originale.
+    /// @dev Può essere chiamato solo durante la fase 'Collaborate' e solo dal proprietario dell'NFT.
+    /// @param tokenId ID della canzone.
+    /// @param wallet Indirizzo del nuovo collaboratore.
+    /// @param splitPercentage Percentuale da sottrarre all'owner e assegnare al collaboratore.
     function addCollaborator(uint256 tokenId, address payable wallet, uint8 splitPercentage) public {
-
-
-        //Questi check servono per far si che i collaboratori possano essere aggiunti solo nella fase di collaborate e solo dall'owner
+        // Verifica fase
+        require(_songs[tokenId].currentState == LifecycleState.Collaborate, "Spyral: Not in Collaborate phase");
         
-        // 1. CHECK FASE: Possiamo modificare SOLO se siamo in fase Collaborate
-        // Questo è il cuore della sicurezza temporale
-        
-        require(
-        _songs[tokenId].currentState == LifecycleState.Collaborate, 
-        "Spyral: Cannot edit after Collaborate phase"
-        );
-
-        // 2. CHECK OWNER: Stretto (Niente operatori, niente marketplace)
-        // Usiamo ownerOf(tokenId) direttamente.
-        require(
-        ownerOf(tokenId) == msg.sender, 
-        "Spyral: Only the strict owner can add collaborators"
-        );
-
-        // 3. CHECK LOGICO: Evitiamo percentuali assurde
-        require(splitPercentage > 0 && splitPercentage <= 100, "Invalid percentage");
-    
-        
-
-        // MODIFICA 2: _isApprovedOrOwner non esiste più.
-        // Si usa _checkAuthorized. E NON va dentro il 'require' (fa revert da solo).
+        // Verifica autorizzazione (Strict Owner)
         address owner = ownerOf(tokenId);
+        require(owner == msg.sender, "Spyral: Only owner can add collaborators");
+        require(splitPercentage > 0 && splitPercentage <= 100, "Spyral: Invalid percentage");
+
+        // @dev Check autorizzazione standard v5
         _checkAuthorized(owner, msg.sender, tokenId);
 
-        // Aggiungi logica per controllare che la somma delle percentuali non superi 100
-    
-        // MODIFICA: Logica di ridistribuzione (Diluizione)
+        // Logica di ridistribuzione quote
         bool ownerFound = false;
         uint256 ownerIndex;
         uint256 len = _collaborators[tokenId].length;
 
-        // Cerchiamo l'owner attuale nella lista dei collaboratori
         for (uint i = 0; i < len; i++) {
             if (_collaborators[tokenId][i].wallet == owner) {
                 ownerIndex = i;
@@ -136,113 +99,74 @@ contract SongAsset is ERC721, Ownable {
             }
         }
 
-        require(ownerFound, "L'owner non e presente nella lista dei collaboratori");
-        require(_collaborators[tokenId][ownerIndex].splitPercentage >= splitPercentage, "L'owner non ha abbastanza quote disponibili");
+        require(ownerFound, "Spyral: Owner missing in collaborator list");
+        require(_collaborators[tokenId][ownerIndex].splitPercentage >= splitPercentage, "Spyral: Insufficient shares");
 
-        // Sottraiamo la percentuale all'owner
         _collaborators[tokenId][ownerIndex].splitPercentage -= splitPercentage;
-
-        // Aggiungiamo il nuovo collaboratore
         _collaborators[tokenId].push(Collaborator(wallet, splitPercentage));
-        
     }
 
-	// Funzione View per leggere i collaboratori (essenziale per i test e il frontend)
-    function getCollaborators(uint256 tokenId) public view returns (Collaborator[] memory) {
-        return _collaborators[tokenId];
-    }
-    
-    //utilizziamo funzione per definire il tempo di attesa tra i cambi di stato
-    // NOTA questa funzione è puramente esemplificativa, in un contesto reale si potrebbe voler gestire in modo più dinamico o complesso i tempi di attesa, 
-    //magari con parametri configurabili o basati su eventi specifici.
-    // inoltre si potrebbe voler aggiungere un meccanismo di "emergenza" per bypassare i tempi di attesa in caso di necessità,
-    // oppure per modificare i tempi di attesa in base a determinate condizioni (ad esempio, se la canzone ha raggiunto un certo numero di collaboratori o di visualizzazioni).
-    function getCooldownForState(LifecycleState state) public pure returns (uint64) {
-        if (state == LifecycleState.Upload) return 0;           // Immediato
-        if (state == LifecycleState.Collaborate) return 1 days; // 24 ore
-        if (state == LifecycleState.Register) return 7 days;    // 1 settimana
-        if (state == LifecycleState.Publish) return 2 days;     // 48 ore
-        return 0;
-    }
-
-    event StateChanged(uint256 indexed tokenId, LifecycleState oldState, LifecycleState newState, uint64 timestamp);
-    //il contratto consente al proprietario di un token di avanzare lo stato della canzone attraverso le fasi del ciclo di vita (Upload, Collaborate, Register, Publish, Revenue).
+    /// @notice Avanza lo stato della canzone alla fase successiva.
+    /// @dev Gestisce i cooldown temporali tra uno stato e l'altro per sicurezza.
+    /// @param tokenId ID della canzone da far avanzare.
     function advanceState(uint256 tokenId) public {
-
-
-        //1. controllo che il token esista e che chi chiama la funzione sia autorizzato (proprietario o approvato)
-        
-        // MODIFICA 3: Stessa cosa qui. Sostituito _isApprovedOrOwner con la logica v5
         address owner = ownerOf(tokenId);
         _checkAuthorized(owner, msg.sender, tokenId);
+        
         Song storage song = _songs[tokenId];
-
-        //2. controllo che sia passato abbastanza tempo dall'ultimo cambio di stato per evitare abusi
         LifecycleState currentState = song.currentState;
         uint64 requiredWait = getCooldownForState(currentState);
 
+        require(block.timestamp >= song.lastStateChange + requiredWait, "Spyral: Cooldown active");
 
-        require(
-            block.timestamp >= song.lastStateChange + requiredWait,
-            "Errore: Non e ancora trascorso il tempo necessario per questo stato"
-        );
-
-        //3. Logica di transizione
-
-        if (song.currentState == LifecycleState.Upload) {
-        song.currentState = LifecycleState.Collaborate;
-        } else if (song.currentState == LifecycleState.Collaborate) {
-
-        // --- BLOCCO DI SICUREZZA ---
-        // Qui stiamo chiudendo il team. È un'azione critica.
-        // Impediamo che lo faccia un semplice "approved".
-        require(msg.sender == owner, "Spyral: Only owner can close Collaboration phase");
-        
-        song.currentState = LifecycleState.Register;
-        } else if (song.currentState == LifecycleState.Register) {
-        song.currentState = LifecycleState.Publish;
-        } else if (song.currentState == LifecycleState.Publish) {
-        song.currentState = LifecycleState.Revenue;
-        }else {
-            // Se è già in Revenue, fermiamo tutto e restituiamo il gas residuo
-            revert("Canzone gia nello stato finale");
+        if (currentState == LifecycleState.Upload) {
+            song.currentState = LifecycleState.Collaborate;
+        } else if (currentState == LifecycleState.Collaborate) {
+            // @dev Solo l'owner reale può chiudere la fase di collaborazione
+            require(msg.sender == owner, "Spyral: Only owner can close phase");
+            song.currentState = LifecycleState.Register;
+        } else if (currentState == LifecycleState.Register) {
+            song.currentState = LifecycleState.Publish;
+        } else if (currentState == LifecycleState.Publish) {
+            song.currentState = LifecycleState.Revenue;
+        } else {
+            revert("Spyral: Already in final state");
         }
 
-        // 4. Aggiorniamo il timestamp per il prossimo scatto
-        song.lastStateChange = uint64(block.timestamp); //
-
+        song.lastStateChange = uint64(block.timestamp);
         emit StateChanged(tokenId, currentState, song.currentState, song.lastStateChange);
     }
-    //NFT cambia aspetto in base a dove si trova nel ciclo di vita. 
-        // La variabile che contiene il CID della cartella IPFS (es: ipfs://Qm.../)
-    string private _baseTokenURI = "ipfs://bafybeibgysnhxqlamsrxmzfbnifws3j2z5npilhm26xzvabzpalbbxkvkq/"; // Valore di default
 
-    // Funzione per aggiornare il CID della cartella (solo il proprietario può farlo)
+    /// @notice Restituisce i tempi di attesa obbligatori per ogni stato.
+    /// @param state Lo stato di cui si vuole conoscere il cooldown.
+    /// @return Tempo in secondi (uint64).
+    function getCooldownForState(LifecycleState state) public pure returns (uint64) {
+        if (state == LifecycleState.Upload) return 0;
+        if (state == LifecycleState.Collaborate) return 1 days;
+        if (state == LifecycleState.Register) return 7 days;
+        if (state == LifecycleState.Publish) return 2 days;
+        return 0;
+    }
+
+    /// @notice Restituisce l'URI dei metadati dinamici in base allo stato attuale.
+    /// @dev Sovrascrive la funzione ERC721 per puntare ad API server.
+    /// @param tokenId ID della canzone.
+    /// @return Stringa completa dell'URI.
+    function tokenURI(uint256 tokenId) public view override returns (string memory) {
+        _requireOwned(tokenId);
+
+        string memory baseURI = _baseTokenURI;    
+        return string.concat(baseURI, tokenId.toString());
+    }
+
+    /// @notice Restituisce la lista dei collaboratori per un dato token.
+    function getCollaborators(uint256 tokenId) public view returns (Collaborator[] memory) {
+        return _collaborators[tokenId];
+    }
+
+    /// @notice Aggiorna l'indirizzo base dei metadati (IPFS CID).
     function setBaseURI(string memory newBaseURI) public onlyOwner {
         _baseTokenURI = newBaseURI;
     }
-    //Il metodo tokenURI restituisce un URI diverso a seconda dello stato attuale della canzone, permettendo di visualizzare metadati e immagini differenti per ogni fase del ciclo di vita.
-    function tokenURI(uint256 tokenId) public view override returns (string memory) {
-        // MODIFICA 4: _exists non esiste più. Si usa _requireOwned per controllare se esiste.
-        _requireOwned(tokenId);
 
-        LifecycleState state = _songs[tokenId].currentState;
-        string memory baseURI = _baseTokenURI;
-        // Restituisce un file JSON diverso per ogni stato
-        // Ho usato string.concat che è più moderno, ma bytes.concat va bene uguale
-
-        if (state == LifecycleState.Upload) {
-            return string.concat(baseURI, "upload.json");
-        } else if (state == LifecycleState.Collaborate) {
-            return string.concat(baseURI, "collaborate.json");
-        } else if (state == LifecycleState.Register) {
-            return string.concat(baseURI, "register.json");
-        } else if (state == LifecycleState.Publish) {
-            return string.concat(baseURI, "publish.json");
-        } else if (state == LifecycleState.Revenue) {
-            return string.concat(baseURI, "revenue.json");
-        } 
-        
-        return string.concat(baseURI, "default.json");
-    }
 }
