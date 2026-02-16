@@ -136,7 +136,7 @@ describe("SongAsset", function () {
 
       // Proviamo subito ad avanzare
       await expect(songAsset.advanceState(tokenId))
-        .to.be.revertedWith("Errore: Non e' ancora trascorso il tempo necessario per questo stato");
+        .to.be.revertedWith("Errore: Non e ancora trascorso il tempo necessario per questo stato");
     });
 
     it("2. Collaborate -> Register: Should pass after 1 day AND strict owner check", async function () {
@@ -168,7 +168,7 @@ describe("SongAsset", function () {
 
       // Proviamo subito
       await expect(songAsset.advanceState(tokenId))
-        .to.be.revertedWith("Errore: Non e' ancora trascorso il tempo necessario per questo stato");
+        .to.be.revertedWith("Errore: Non e ancora trascorso il tempo necessario per questo stato");
     });
 
     it("3. Register -> Publish: Should pass after 7 days", async function () {
@@ -197,7 +197,7 @@ describe("SongAsset", function () {
 
       // Proviamo subito
       await expect(songAsset.advanceState(tokenId))
-        .to.be.revertedWith("Errore: Non e' ancora trascorso il tempo necessario per questo stato");
+        .to.be.revertedWith("Errore: Non e ancora trascorso il tempo necessario per questo stato");
     });
 
     it("4. Publish -> Revenue: Should pass after 2 days", async function () {
@@ -233,6 +233,134 @@ describe("SongAsset", function () {
         .to.be.revertedWith("Canzone gia nello stato finale");
     });
 
+  });
+  
+  describe("Royalty Logic & Split Management", function () {
+    
+    // Helper per settare lo stato a Collaborate
+    async function mintAndReadyToCollab() {
+        await songAsset.mintSong(owner.address, AUDIO_HASH);
+        await songAsset.advanceState(0); 
+        return 0; // TokenId
+    }
+
+    it("Should initialize owner with 100% split upon minting", async function () {
+        const tokenId = await mintAndReadyToCollab();
+        
+        const collaborators = await songAsset.getCollaborators(tokenId);
+        
+        expect(collaborators.length).to.equal(1);
+        expect(collaborators[0].wallet).to.equal(owner.address);
+        expect(collaborators[0].splitPercentage).to.equal(100);
+    });
+
+    it("Should deduct percentage from owner when adding a collaborator", async function () {
+        const tokenId = await mintAndReadyToCollab();
+
+        // Aggiungiamo addr1 con il 20%
+        await songAsset.addCollaborator(tokenId, addr1.address, 20);
+
+        const collaborators = await songAsset.getCollaborators(tokenId);
+
+        // L'owner (indice 0) dovrebbe scendere a 80
+        expect(collaborators[0].splitPercentage).to.equal(80);
+        // Il nuovo (indice 1) dovrebbe essere a 20
+        expect(collaborators[1].wallet).to.equal(addr1.address);
+        expect(collaborators[1].splitPercentage).to.equal(20);
+    });
+
+    it("Should handle multiple collaborators correctly (Chain dilution)", async function () {
+        const tokenId = await mintAndReadyToCollab();
+        const [ownerSigner, collab1, collab2] = await ethers.getSigners();
+
+        // 1. Aggiungiamo Collab1 al 20% (Owner scende a 80%)
+        await songAsset.addCollaborator(tokenId, collab1.address, 20);
+        
+        // 2. Aggiungiamo Collab2 al 40% (Owner scende a 40%)
+        await songAsset.addCollaborator(tokenId, collab2.address, 40);
+
+        const collaborators = await songAsset.getCollaborators(tokenId);
+
+        // Verifica Owner
+        expect(collaborators[0].splitPercentage).to.equal(40); // 100 - 20 - 40
+        // Verifica Collab1
+        expect(collaborators[1].splitPercentage).to.equal(20);
+        // Verifica Collab2
+        expect(collaborators[2].splitPercentage).to.equal(40);
+    });
+
+    it("Should ensure total percentage always equals 100", async function () {
+        const tokenId = await mintAndReadyToCollab();
+        const [ownerSigner, c1, c2, c3] = await ethers.getSigners();
+
+        await songAsset.addCollaborator(tokenId, c1.address, 10);
+        await songAsset.addCollaborator(tokenId, c2.address, 25);
+        await songAsset.addCollaborator(tokenId, c3.address, 15);
+
+        const collaborators = await songAsset.getCollaborators(tokenId);
+        
+        let total = 0;
+        for (let c of collaborators) {
+            total += Number(c.splitPercentage);
+        }
+
+        expect(total).to.equal(100);
+    });
+
+    it("Should revert if owner does not have enough equity left", async function () {
+        const tokenId = await mintAndReadyToCollab();
+
+        // Owner ha 100%. Proviamo a dare 110% a qualcun altro.
+        await expect(
+            songAsset.addCollaborator(tokenId, addr1.address, 110) // > 100
+        ).to.be.reverted; // Il check nel contratto o l'underflow matematico lo bloccherà
+
+        // Caso limite: Owner ha 20%, proviamo a toglierne 30%
+        await songAsset.addCollaborator(tokenId, addr1.address, 80); // Owner ora ha 20%
+        
+        await expect(
+            songAsset.addCollaborator(tokenId, addr1.address, 30)
+        ).to.be.revertedWith("L'owner non ha abbastanza quote disponibili");
+    });
+  });
+
+  describe("TokenURI & Metadata Correctness", function () {
+      
+    it("Should return correct URI for each lifecycle state", async function () {
+        // MINT (State: Upload)
+        await songAsset.mintSong(owner.address, AUDIO_HASH);
+        expect(await songAsset.tokenURI(0)).to.contain("upload.json");
+
+        // ADVANCE -> Collaborate
+        await songAsset.advanceState(0);
+        expect(await songAsset.tokenURI(0)).to.contain("collaborate.json");
+
+        // ADVANCE -> Register (Richiede 1 giorno di attesa)
+        await time.increase(86400 + 10);
+        await songAsset.advanceState(0);
+        expect(await songAsset.tokenURI(0)).to.contain("register.json");
+
+        // ADVANCE -> Publish (Richiede 7 giorni di attesa)
+        await time.increase(604800 + 10);
+        await songAsset.advanceState(0);
+        expect(await songAsset.tokenURI(0)).to.contain("publish.json");
+
+        // ADVANCE -> Revenue (Richiede 2 giorni di attesa)
+        await time.increase(172800 + 10);
+        await songAsset.advanceState(0);
+        expect(await songAsset.tokenURI(0)).to.contain("revenue.json");
+    });
+
+    it("Should allow owner to update Base URI", async function () {
+        const newBase = "ipfs://nuovo-cid-super-figo/";
+        await songAsset.setBaseURI(newBase);
+        
+        // Minta una nuova canzone per testare
+        await songAsset.mintSong(owner.address, AUDIO_HASH);
+        
+        const uri = await songAsset.tokenURI(0); // ID 0
+        expect(uri).to.equal(newBase + "upload.json");
+    });
   });
 
 });

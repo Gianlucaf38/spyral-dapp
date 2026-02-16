@@ -74,6 +74,9 @@ contract SongAsset is ERC721, Ownable {
             audioHash: _audioHash //L'hash è computazionalmente troppo costoso da fare on chain con file di GB, per questo motivo lo calcoliamo nel frontend che andrò poi
             //a richiamare la funzione di minting passando direttamente l'hash già calcolato
         });
+        
+        //Inizializziamo l'owner  come primo collaboratore con il 100% delle quote (altrimenti non potremmo tenere traccia delle quote associate)
+        _collaborators[newItemId].push(Collaborator(payable(to), 100));
 
         return newItemId;
     }
@@ -118,9 +121,37 @@ contract SongAsset is ERC721, Ownable {
         _checkAuthorized(owner, msg.sender, tokenId);
 
         // Aggiungi logica per controllare che la somma delle percentuali non superi 100
+    
+        // MODIFICA: Logica di ridistribuzione (Diluizione)
+        bool ownerFound = false;
+        uint256 ownerIndex;
+        uint256 len = _collaborators[tokenId].length;
+
+        // Cerchiamo l'owner attuale nella lista dei collaboratori
+        for (uint i = 0; i < len; i++) {
+            if (_collaborators[tokenId][i].wallet == owner) {
+                ownerIndex = i;
+                ownerFound = true;
+                break;
+            }
+        }
+
+        require(ownerFound, "L'owner non e presente nella lista dei collaboratori");
+        require(_collaborators[tokenId][ownerIndex].splitPercentage >= splitPercentage, "L'owner non ha abbastanza quote disponibili");
+
+        // Sottraiamo la percentuale all'owner
+        _collaborators[tokenId][ownerIndex].splitPercentage -= splitPercentage;
+
+        // Aggiungiamo il nuovo collaboratore
         _collaborators[tokenId].push(Collaborator(wallet, splitPercentage));
+        
     }
 
+	// Funzione View per leggere i collaboratori (essenziale per i test e il frontend)
+    function getCollaborators(uint256 tokenId) public view returns (Collaborator[] memory) {
+        return _collaborators[tokenId];
+    }
+    
     //utilizziamo funzione per definire il tempo di attesa tra i cambi di stato
     // NOTA questa funzione è puramente esemplificativa, in un contesto reale si potrebbe voler gestire in modo più dinamico o complesso i tempi di attesa, 
     //magari con parametri configurabili o basati su eventi specifici.
