@@ -81,7 +81,7 @@ The project is configured for deployment on the **Base Sepolia Testnet** using t
 
 ---
 
-## 6. Project Conclusions
+## 4. Project Conclusions
 
 This implementation demonstrates a scalable solution for dynamic assets. By keeping critical state data on-chain while utilizing off-chain APIs for presentation, the **Spyral Song Asset** achieves a balance between decentralization, cost-efficiency, and flexibility.
 
