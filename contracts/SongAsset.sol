@@ -21,6 +21,10 @@ contract SongAsset is ERC721, Ownable {
         uint64 lastStateChange;      // Slot 1 (64 bit) - Timestamp dell'ultima transizione
         uint128 totalRevenue;        // Slot 1 (128 bit) - Sufficiente per cifre astronomiche (10^38)
         bytes32 audioHash;           // Slot 2 (256 bit) - Hash per l'integrità del file audio
+
+        uint64 publishedAt;          // Slot 3 (64 bit)
+        uint128 streamCount;         // Slot 3 (128 bit)
+
     }
 
     /// @dev Collaboratore e relativa quota di royalty.
@@ -31,11 +35,22 @@ contract SongAsset is ERC721, Ownable {
 
     mapping(uint256 => Song) private _songs;
     mapping(uint256 => Collaborator[]) private _collaborators;
+    mapping(uint256 => uint256) private _tokenBalances;
     uint256 private _nextTokenId;
     string private _baseTokenURI = "https://api.spyral.com/metadata/";
 
     /// @notice Emesso quando una canzone cambia stato nel ciclo di vita.
     event StateChanged(uint256 indexed tokenId, LifecycleState oldState, LifecycleState newState, uint64 timestamp);
+
+    // @notice Emesso quando viene aggiornato il numero di stream (ogni 100k stream).
+    event StreamCountUpdated(uint256 indexed tokenId, uint128 newCount); 
+
+    /// @notice Emesso quando il contratto riceve fondi (revenue) per una canzone.
+    event RevenueReceived(uint256 indexed tokenId, uint256 amount);
+
+    /// @notice Emesso quando le royalties vengono distribuite ai collaboratori.
+    event RoyaltiesDistributed(uint256 indexed tokenId, uint256 totalAmount);
+
 
     /// @dev Inizializza il contratto impostando il nome, il simbolo e l'owner iniziale.
     /// @param initialOwner Indirizzo che avrà i poteri di amministrazione (minter).
@@ -61,7 +76,9 @@ contract SongAsset is ERC721, Ownable {
             currentState: LifecycleState.Upload,
             lastStateChange: uint64(block.timestamp),
             totalRevenue: 0,
-            audioHash: _audioHash
+            audioHash: _audioHash,
+            publishedAt: 0, 
+            streamCount: 0
         });
         
         _collaborators[newItemId].push(Collaborator(payable(to), 100));
@@ -106,6 +123,16 @@ contract SongAsset is ERC721, Ownable {
         _collaborators[tokenId].push(Collaborator(wallet, splitPercentage));
     }
 
+    /// @notice Aggiorna il contatore stream (es. al raggiungimento di milestone 100k)
+    /// @dev Solo l'owner (Spyral Backend) può chiamarla per evitare dati falsi.
+    function updateStreamMilestone(uint256 tokenId, uint128 newStreamCount) public onlyOwner {
+        _requireOwned(tokenId);
+        require(newStreamCount > _songs[tokenId].streamCount, "New count must be higher");
+        
+        _songs[tokenId].streamCount = newStreamCount;
+        emit StreamCountUpdated(tokenId, newStreamCount);
+    }
+
     /// @notice Avanza lo stato della canzone alla fase successiva.
     /// @dev Gestisce i cooldown temporali tra uno stato e l'altro per sicurezza.
     /// @param tokenId ID della canzone da far avanzare.
@@ -127,6 +154,7 @@ contract SongAsset is ERC721, Ownable {
             song.currentState = LifecycleState.Register;
         } else if (currentState == LifecycleState.Register) {
             song.currentState = LifecycleState.Publish;
+            song.publishedAt = uint64(block.timestamp); //il timestamp corrente è quello di pubblicazione
         } else if (currentState == LifecycleState.Publish) {
             song.currentState = LifecycleState.Revenue;
         } else {
@@ -167,6 +195,82 @@ contract SongAsset is ERC721, Ownable {
     /// @notice Aggiorna l'indirizzo base dei metadati (IPFS CID).
     function setBaseURI(string memory newBaseURI) public onlyOwner {
         _baseTokenURI = newBaseURI;
+    }
+
+    /// @notice Restituisce i dati critici on-chain di una canzone specifica.
+    /// @dev Utile per il frontend per ottenere stato, revenue e integrità audio in una sola chiamata senza passare dall'API.
+    /// @param tokenId L'ID univoco del token NFT.
+    /// @return currentState La fase attuale del ciclo di vita (es. Upload, Publish, Revenue).
+    /// @return publishedAt Il timestamp (in secondi) di quando la canzone è stata pubblicata.
+    /// @return streamCount Il numero di ascolti (aggiornato periodicamente tramite pietre miliari).
+    /// @return totalRevenue Il totale dei guadagni (in wei) accumulati dalla canzone nella sua storia.
+    /// @return audioHash L'hash crittografico del file audio originale per verifica di integrità.
+    function getSongData(uint256 tokenId) public view returns (
+        LifecycleState currentState,
+        uint64 publishedAt,
+        uint128 streamCount,
+        uint128 totalRevenue,
+        bytes32 audioHash
+    ) {
+        // Controllo esistenza token (versione corretta per OpenZeppelin v5)
+        _requireOwned(tokenId);
+
+        Song memory song = _songs[tokenId];
+        
+        return (
+            song.currentState, 
+            song.publishedAt, 
+            song.streamCount, 
+            song.totalRevenue, 
+            song.audioHash
+        );
+    }
+
+    /// @notice Deposita revenue per una SPECIFICA canzone.
+    function depositRevenue(uint256 tokenId) public payable {
+        _requireOwned(tokenId);
+        require(msg.value > 0, "No value sent");
+        
+        // Aggiorna lo storico totale (Vanity Metric)
+        _songs[tokenId].totalRevenue += uint128(msg.value);
+        
+        // Aggiorna il saldo prelevabile SPECIFICO per questa canzone
+        _tokenBalances[tokenId] += msg.value;
+        
+        emit RevenueReceived(tokenId, msg.value);
+    }
+
+    /// @notice Distribuisce royalties. Include sia msg.value immediato che saldo accumulato.
+    function distributeRoyalties(uint256 tokenId) public payable {
+        require(_songs[tokenId].currentState == LifecycleState.Revenue, "Not in Revenue phase");
+        _requireOwned(tokenId);
+
+        // 1. Gestione di nuovi fondi in ingresso (Push)
+        if (msg.value > 0) {
+            _songs[tokenId].totalRevenue += uint128(msg.value);
+            _tokenBalances[tokenId] += msg.value;
+            emit RevenueReceived(tokenId, msg.value);
+        }
+
+        // 2. Calcolo del totale distribuibile per QUESTA canzone
+        uint256 amountToDistribute = _tokenBalances[tokenId];
+        require(amountToDistribute > 0, "No funds to distribute for this song");
+
+        // 3. Azzeriamo il saldo PRIMA di inviare (Pattern Checks-Effects-Interactions)
+        _tokenBalances[tokenId] = 0;
+
+        Collaborator[] memory collaborators = _collaborators[tokenId];
+        
+        for (uint i = 0; i < collaborators.length; i++) {
+            uint256 amount = (amountToDistribute * collaborators[i].splitPercentage) / 100;
+            
+            if (amount > 0) {
+                (bool success, ) = collaborators[i].wallet.call{value: amount}("");
+                require(success, "Transfer failed");
+            }
+        }
+
+        emit RoyaltiesDistributed(tokenId, amountToDistribute);
     }
 
 }
