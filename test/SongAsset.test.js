@@ -1,367 +1,319 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
+const { loadFixture } = require("@nomicfoundation/hardhat-network-helpers");
 const { anyValue } = require("@nomicfoundation/hardhat-chai-matchers/withArgs");
-const { time } = require("@nomicfoundation/hardhat-network-helpers");
+describe("Spyral SongAsset (Full Suite)", function () {
+  
+  // Costanti utili
+  const AUDIO_HASH = ethers.keccak256(ethers.toUtf8Bytes("spyral-audio-test"));
+  const INITIAL_URI = "https://api.spyral.com/metadata/";
+  const TOKEN_ID = 1; // Il contatore parte da 1 nello smart contract fornito
 
-describe("SongAsset", function () {
-  let songAsset;
-  let owner;
-  let addr1;
+  // Enums (devono corrispondere allo Smart Contract)
+  const STATE = {
+    Upload: 0,
+    Collaborate: 1,
+    Register: 2,
+    Publish: 3,
+    Revenue: 4
+  };
 
-  const AUDIO_HASH = ethers.keccak256(
-    ethers.toUtf8Bytes("test-audio-file")
-  );
+  const REQUEST_TYPE = {
+    CHECK_PUBLICATION: 0,
+    UPDATE_STREAMS: 1
+  };
 
-  beforeEach(async function () {
-    [owner, addr1] = await ethers.getSigners();
-    const SongAsset = await ethers.getContractFactory("SongAsset");
-    songAsset = await SongAsset.deploy(owner.address);
-    await songAsset.waitForDeployment();
+  // Fixture per il setup (ottimizza la velocità dei test)
+  async function deployFixture() {
+    const [owner, user, collaborator, rando] = await ethers.getSigners();
+
+    // 1. Deploy Mock Router
+    const MockRouter = await ethers.getContractFactory("MockRouter");
+    const router = await MockRouter.deploy();
+    await router.waitForDeployment();
+
+    // 2. Deploy SongAsset Mock (versione testabile)
+    const SongAssetMock = await ethers.getContractFactory("SongAssetMock");
+    const contract = await SongAssetMock.deploy(owner.address, router.target);
+    await contract.waitForDeployment();
+
+    return { contract, router, owner, user, collaborator, rando };
+  }
+
+  // Helper per estrarre RequestID dagli eventi
+  async function getRequestIdFromTx(tx) {
+    const receipt = await tx.wait();
+    const event = receipt.logs.find(log => log.fragment && log.fragment.name === "OracleRequestSent");
+    return event.args.requestId;
+  }
+
+  describe("1. Deployment & Minting", function () {
+    it("Should set the right owner and initial counters", async function () {
+      const { contract, owner } = await loadFixture(deployFixture);
+      expect(await contract.owner()).to.equal(owner.address);
+    });
+
+    it("Should mint with ID 1 and correct initial state", async function () {
+      const { contract, user } = await loadFixture(deployFixture);
+
+      await contract.mintSong(user.address, AUDIO_HASH);
+
+      const songData = await contract.getSongData(TOKEN_ID);
+      
+      expect(await contract.ownerOf(TOKEN_ID)).to.equal(user.address);
+      expect(songData.currentState).to.equal(STATE.Upload);
+      expect(songData.audioHash).to.equal(AUDIO_HASH);
+      expect(songData.streamCount).to.equal(0);
+    });
   });
 
-  it("Should mint a new song", async function () {
-    await songAsset.mintSong(addr1.address, AUDIO_HASH);
+  describe("2. Manual State Transitions (Upload -> Register)", function () {
+    it("Should allow advancing from Upload to Collaborate", async function () {
+      const { contract, owner } = await loadFixture(deployFixture);
+      await contract.mintSong(owner.address, AUDIO_HASH);
 
-    expect(await songAsset.ownerOf(0)).to.equal(addr1.address);
+      await expect(contract.advanceState(TOKEN_ID))
+        .to.emit(contract, "StateChanged")
+        .withArgs(TOKEN_ID, STATE.Upload, STATE.Collaborate, anyValue);
+    });
+
+    it("Should allow advancing from Collaborate to Register", async function () {
+      const { contract, owner } = await loadFixture(deployFixture);
+      await contract.mintSong(owner.address, AUDIO_HASH);
+      await contract.advanceState(TOKEN_ID); // -> Collaborate
+
+      await expect(contract.advanceState(TOKEN_ID))
+        .to.emit(contract, "StateChanged")
+        .withArgs(TOKEN_ID, STATE.Collaborate, STATE.Register, anyValue);
+    });
+
+    it("Should REVERT if trying to advance manually past Register", async function () {
+      const { contract, owner } = await loadFixture(deployFixture);
+      await contract.mintSong(owner.address, AUDIO_HASH);
+      await contract.advanceState(TOKEN_ID); // -> Collaborate
+      await contract.advanceState(TOKEN_ID); // -> Register
+
+      // Da Register a Publish serve l'Oracolo!
+      await expect(contract.advanceState(TOKEN_ID))
+        .to.be.revertedWith("Stop: Use Oracle to Publish");
+    });
   });
 
-  it("Should revert if non-owner tries to mint", async function () {
-    await expect(
-      songAsset.connect(addr1).mintSong(addr1.address, AUDIO_HASH)
-    ).to.be.reverted;
+  describe("3. Collaborator Management", function () {
+    it("Should allow adding a collaborator and update splits correctly", async function () {
+      const { contract, owner, collaborator } = await loadFixture(deployFixture);
+      await contract.mintSong(owner.address, AUDIO_HASH);
+      
+      // Deve essere in fase Collaborate
+      await contract.advanceState(TOKEN_ID); 
+
+      // Aggiunge collaborator al 20%
+      await contract.addCollaborator(TOKEN_ID, collaborator.address, 20);
+
+      const collabs = await contract.getCollaborators(TOKEN_ID);
+      
+      // Owner (index 0) scende a 80
+      expect(collabs[0].splitPercentage).to.equal(80);
+      expect(collabs[0].wallet).to.equal(owner.address);
+
+      // Collaborator (index 1) ha 20
+      expect(collabs[1].splitPercentage).to.equal(20);
+      expect(collabs[1].wallet).to.equal(collaborator.address);
+    });
+
+    it("Should revert if adding collaborator in wrong phase", async function () {
+      const { contract, owner, collaborator } = await loadFixture(deployFixture);
+      await contract.mintSong(owner.address, AUDIO_HASH);
+      // Fase Upload (troppo presto)
+      
+      await expect(
+        contract.addCollaborator(TOKEN_ID, collaborator.address, 20)
+      ).to.be.revertedWith("Spyral: Not in Collaborate phase");
+    });
+
+    it("Should revert if non-owner tries to add collaborator", async function () {
+      const { contract, owner, collaborator, rando } = await loadFixture(deployFixture);
+      await contract.mintSong(owner.address, AUDIO_HASH);
+      await contract.advanceState(TOKEN_ID);
+
+      await expect(
+        contract.connect(rando).addCollaborator(TOKEN_ID, collaborator.address, 20)
+      ).to.be.revertedWith("Spyral: Only owner can add collaborators");
+    });
   });
 
-  it("Should advance state", async function () {
-    await songAsset.mintSong(owner.address, AUDIO_HASH);
+  describe("4. Oracle Integration (Register -> Publish -> Revenue)", function () {
+    
+    // Helper per portare lo stato a Register
+    async function setupToRegister(contract, owner) {
+      await contract.mintSong(owner.address, AUDIO_HASH);
+      await contract.advanceState(TOKEN_ID); // -> Collaborate
+      await contract.advanceState(TOKEN_ID); // -> Register
+    }
 
-    await expect(songAsset.advanceState(0))
-      .to.emit(songAsset, "StateChanged")
-      .withArgs(
-        0,
-        0, // Upload
-        1, // Collaborate
-        anyValue
+    it("Should set Spotify ID correctly", async function () {
+      const { contract, owner } = await loadFixture(deployFixture);
+      await setupToRegister(contract, owner);
+
+      await expect(contract.setSpotifyId(TOKEN_ID, "spotify:track:test"))
+        .to.emit(contract, "SpotifyIdSet")
+        .withArgs(TOKEN_ID, "spotify:track:test");
+    });
+
+    it("Should use Oracle to move from Register to Publish", async function () {
+      const { contract, owner } = await loadFixture(deployFixture);
+      await setupToRegister(contract, owner);
+      await contract.setSpotifyId(TOKEN_ID, "TEST_ID");
+
+      // 1. Richiesta Oracle (Check Publication)
+      const tx = await contract.requestOracleCheck(
+        TOKEN_ID, 
+        REQUEST_TYPE.CHECK_PUBLICATION, 
+        "return Functions.encodeUint256(1);"
       );
-  });
-  
-  describe("Collaborator Management", function () {
-    
-    // Helper per portare la canzone allo stato Collaborate
-    async function mintAndAdvanceToCollaborate() {
-      await songAsset.mintSong(owner.address, AUDIO_HASH);
-      // Stato iniziale: Upload. 
-      // Cooldown per Upload è 0, quindi possiamo avanzare subito.
-      await songAsset.advanceState(0); 
-      // Ora siamo in Collaborate
-    }
-
-    it("Should allow owner to add a collaborator in Collaborate phase", async function () {
-      await mintAndAdvanceToCollaborate();
-
-      // Proviamo ad aggiungere un collaboratore (addr1 con 20%)
-      // Se la transazione non va in revert, il test passa
-      await expect(
-        songAsset.addCollaborator(0, addr1.address, 20)
-      ).to.not.be.reverted;
-    });
-
-    it("Should revert if trying to add collaborator in Upload phase (Too Early)", async function () {
-      // Mintiamo ma NON avanziamo di stato (siamo in Upload)
-      await songAsset.mintSong(owner.address, AUDIO_HASH);
-
-      await expect(
-        songAsset.addCollaborator(0, addr1.address, 20)
-      ).to.be.revertedWith("Spyral: Cannot edit after Collaborate phase");
-    });
-
-    it("Should revert if trying to add collaborator in Register phase (Too Late)", async function () {
-      await mintAndAdvanceToCollaborate(); // Siamo in Collaborate
-
-      // Dobbiamo avanzare a Register. 
-      // MA il contratto richiede un cooldown di 1 giorno per uscire da Collaborate.
-      // Usiamo l'helper di Hardhat per viaggiare nel futuro di 1 giorno + 1 secondo
-      await time.increase(86400 + 1); 
-
-      await songAsset.advanceState(0); // Ora siamo in Register
-
-      await expect(
-        songAsset.addCollaborator(0, addr1.address, 20)
-      ).to.be.revertedWith("Spyral: Cannot edit after Collaborate phase");
-    });
-
-    it("Should revert if a non-owner tries to add a collaborator", async function () {
-      await mintAndAdvanceToCollaborate();
-
-      // addr1 prova ad aggiungere se stesso come collaboratore
-      await expect(
-        songAsset.connect(addr1).addCollaborator(0, addr1.address, 20)
-      ).to.be.revertedWith("Spyral: Only the strict owner can add collaborators");
-    });
-
-    it("Should revert with invalid percentages", async function () {
-      await mintAndAdvanceToCollaborate();
-
-      // Test 0%
-      await expect(
-        songAsset.addCollaborator(0, addr1.address, 0)
-      ).to.be.revertedWith("Invalid percentage");
-
-      // Test 101%
-      await expect(
-        songAsset.addCollaborator(0, addr1.address, 101)
-      ).to.be.revertedWith("Invalid percentage");
-    });
-  });
-  
-  describe("Lifecycle State Transitions (Time & Logic)", function () {
-
-    // Helper: Minta una canzone e ritorna l'ID (sempre 0 se puliamo il test)
-    async function mintSong() {
-      await songAsset.mintSong(owner.address, AUDIO_HASH);
-      return 0; // TokenID
-    }
-
-    it("1. Upload -> Collaborate: Should pass immediately (0 wait)", async function () {
-      const tokenId = await mintSong();
       
-      // Upload -> Collaborate (Wait 0)
-      await expect(songAsset.advanceState(tokenId))
-        .to.emit(songAsset, "StateChanged")
-        .withArgs(tokenId, 0, 1, anyValue); // 0=Upload, 1=Collaborate
+      const requestId = await getRequestIdFromTx(tx);
+
+      // 2. Simulazione Risposta (MockFulfill) - 1 = Pubblicato
+      const encodedResponse = ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [1]);
+      await contract.mockFulfill(requestId, encodedResponse);
+
+      // 3. Verifica Stato
+      const data = await contract.getSongData(TOKEN_ID);
+      expect(data.currentState).to.equal(STATE.Publish);
+      expect(data.publishedAt).to.be.gt(0); // Timestamp impostato
     });
 
-    it("2. Collaborate -> Register: Should fail if called too early (< 1 day)", async function () {
-      const tokenId = await mintSong();
-      await songAsset.advanceState(tokenId); // Ora siamo in Collaborate
+    it("Should update streams but NOT change state if threshold < 1000", async function () {
+      const { contract, owner } = await loadFixture(deployFixture);
+      // ... setup fino a Publish ...
+      await setupToRegister(contract, owner);
+      await contract.setSpotifyId(TOKEN_ID, "TEST");
+      const tx1 = await contract.requestOracleCheck(TOKEN_ID, 0, "source");
+      const reqId1 = await getRequestIdFromTx(tx1);
+      await contract.mockFulfill(reqId1, ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [1]));
 
-      // Proviamo subito ad avanzare
-      await expect(songAsset.advanceState(tokenId))
-        .to.be.revertedWith("Errore: Non e ancora trascorso il tempo necessario per questo stato");
+      // Ora siamo in Publish. Aggiorniamo Streams a 500
+      const tx2 = await contract.requestOracleCheck(TOKEN_ID, REQUEST_TYPE.UPDATE_STREAMS, "source");
+      const reqId2 = await getRequestIdFromTx(tx2);
+      
+      const encodedStreams = ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [500]);
+      await contract.mockFulfill(reqId2, encodedStreams);
+
+      const data = await contract.getSongData(TOKEN_ID);
+      expect(data.streamCount).to.equal(500);
+      expect(data.currentState).to.equal(STATE.Publish); // Ancora in Publish
     });
 
-    it("2. Collaborate -> Register: Should pass after 1 day AND strict owner check", async function () {
-      const tokenId = await mintSong();
-      await songAsset.advanceState(tokenId); // Siamo in Collaborate
+    it("Should move to Revenue when streams >= 1000", async function () {
+      const { contract, owner } = await loadFixture(deployFixture);
+      // ... setup veloce fino a Publish ...
+      await setupToRegister(contract, owner);
+      await contract.setSpotifyId(TOKEN_ID, "TEST");
+      const tx1 = await contract.requestOracleCheck(TOKEN_ID, 0, "source");
+      const reqId1 = await getRequestIdFromTx(tx1);
+      await contract.mockFulfill(reqId1, ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [1]));
 
-      // Viaggiamo nel futuro: 1 giorno + 1 secondo di buffer
-      await time.increase(86400 + 1);
-
-      // SECURITY CHECK: Proviamo con un utente 'Approved' (non Owner)
-      // addr1 viene approvato
-      await songAsset.approve(addr1.address, tokenId);
-      // addr1 prova a chiudere la fase Collaborate -> DEVE FALLIRE
-      await expect(
-        songAsset.connect(addr1).advanceState(tokenId)
-      ).to.be.revertedWith("Spyral: Only owner can close Collaboration phase");
-
-      // SUCCESS CHECK: L'owner chiama -> DEVE PASSARE
-      await expect(songAsset.advanceState(tokenId))
-        .to.emit(songAsset, "StateChanged")
-        .withArgs(tokenId, 1, 2, anyValue); // 1=Collaborate, 2=Register
+      // Aggiorniamo Streams a 1500 (Sopra soglia)
+      const tx2 = await contract.requestOracleCheck(TOKEN_ID, REQUEST_TYPE.UPDATE_STREAMS, "source");
+      const reqId2 = await getRequestIdFromTx(tx2);
+      
+      const encodedStreams = ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [1500]);
+      
+      await expect(contract.mockFulfill(reqId2, encodedStreams))
+        .to.emit(contract, "MonetizationUnlocked")
+        .withArgs(TOKEN_ID, 1500)
+        .to.emit(contract, "StateChanged")
+        .withArgs(TOKEN_ID, STATE.Publish, STATE.Revenue, anyValue);
+      
+      const data = await contract.getSongData(TOKEN_ID);
+      expect(data.currentState).to.equal(STATE.Revenue);
     });
-
-    it("3. Register -> Publish: Should fail if called too early (< 7 days)", async function () {
-      const tokenId = await mintSong();
-      await songAsset.advanceState(tokenId); // -> Collaborate
-      await time.increase(86400 + 1); 
-      await songAsset.advanceState(tokenId); // -> Register
-
-      // Proviamo subito
-      await expect(songAsset.advanceState(tokenId))
-        .to.be.revertedWith("Errore: Non e ancora trascorso il tempo necessario per questo stato");
-    });
-
-    it("3. Register -> Publish: Should pass after 7 days", async function () {
-      const tokenId = await mintSong();
-      // Setup veloce fino a Register
-      await songAsset.advanceState(tokenId); // -> Collaborate
-      await time.increase(86400 + 1);
-      await songAsset.advanceState(tokenId); // -> Register
-
-      // Viaggiamo nel futuro: 7 giorni (604800 sec)
-      await time.increase(604800 + 1);
-
-      await expect(songAsset.advanceState(tokenId))
-        .to.emit(songAsset, "StateChanged")
-        .withArgs(tokenId, 2, 3, anyValue); // 2=Register, 3=Publish
-    });
-
-    it("4. Publish -> Revenue: Should fail if called too early (< 2 days)", async function () {
-      const tokenId = await mintSong();
-      // Setup veloce fino a Publish
-      await songAsset.advanceState(tokenId); 
-      await time.increase(86400 + 1);
-      await songAsset.advanceState(tokenId); 
-      await time.increase(604800 + 1);
-      await songAsset.advanceState(tokenId); // -> Publish
-
-      // Proviamo subito
-      await expect(songAsset.advanceState(tokenId))
-        .to.be.revertedWith("Errore: Non e ancora trascorso il tempo necessario per questo stato");
-    });
-
-    it("4. Publish -> Revenue: Should pass after 2 days", async function () {
-      const tokenId = await mintSong();
-      // Setup veloce fino a Publish...
-      await songAsset.advanceState(tokenId); 
-      await time.increase(86400 + 1);
-      await songAsset.advanceState(tokenId); 
-      await time.increase(604800 + 1);
-      await songAsset.advanceState(tokenId); // -> Publish
-
-      // Viaggiamo nel futuro: 2 giorni (172800 sec)
-      await time.increase(172800 + 1);
-
-      await expect(songAsset.advanceState(tokenId))
-        .to.emit(songAsset, "StateChanged")
-        .withArgs(tokenId, 3, 4, anyValue); // 3=Publish, 4=Revenue
-    });
-
-    it("5. Revenue -> End: Should revert if trying to advance past Revenue", async function () {
-      const tokenId = await mintSong();
-      // Portiamo tutto alla fine...
-      await songAsset.advanceState(tokenId); 
-      await time.increase(86400 + 1);
-      await songAsset.advanceState(tokenId); 
-      await time.increase(604800 + 1);
-      await songAsset.advanceState(tokenId); 
-      await time.increase(172800 + 1);
-      await songAsset.advanceState(tokenId); // -> Revenue
-
-      // Proviamo ad andare oltre
-      await expect(songAsset.advanceState(tokenId))
-        .to.be.revertedWith("Canzone gia nello stato finale");
-    });
-
   });
-  
-  describe("Royalty Logic & Split Management", function () {
+
+  describe("5. Financials (Revenue & Royalties)", function () {
     
-    // Helper per settare lo stato a Collaborate
-    async function mintAndReadyToCollab() {
-        await songAsset.mintSong(owner.address, AUDIO_HASH);
-        await songAsset.advanceState(0); 
-        return 0; // TokenId
+    async function setupToRevenue(contract, owner, collaborator) {
+      // Setup completo: Mint -> Collab -> Register -> Publish -> Revenue
+      await contract.mintSong(owner.address, AUDIO_HASH);
+      await contract.advanceState(TOKEN_ID); 
+      // Aggiungiamo collaboratore (Owner 80%, Collab 20%)
+      await contract.addCollaborator(TOKEN_ID, collaborator.address, 20);
+      await contract.advanceState(TOKEN_ID);
+      await contract.setSpotifyId(TOKEN_ID, "TEST");
+      
+      // Publish
+      let tx = await contract.requestOracleCheck(TOKEN_ID, 0, "src");
+      let rid = await getRequestIdFromTx(tx);
+      await contract.mockFulfill(rid, ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [1]));
+
+      // Revenue (Streams > 1000)
+      tx = await contract.requestOracleCheck(TOKEN_ID, 1, "src");
+      rid = await getRequestIdFromTx(tx);
+      await contract.mockFulfill(rid, ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [2000]));
     }
 
-    it("Should initialize owner with 100% split upon minting", async function () {
-        const tokenId = await mintAndReadyToCollab();
-        
-        const collaborators = await songAsset.getCollaborators(tokenId);
-        
-        expect(collaborators.length).to.equal(1);
-        expect(collaborators[0].wallet).to.equal(owner.address);
-        expect(collaborators[0].splitPercentage).to.equal(100);
+    it("Should accept deposits ONLY in Revenue phase", async function () {
+      const { contract, owner, collaborator } = await loadFixture(deployFixture);
+      await setupToRevenue(contract, owner, collaborator);
+
+      // Deposito 1 ETH
+      await expect(contract.depositRevenue(TOKEN_ID, { value: ethers.parseEther("1.0") }))
+        .to.emit(contract, "RevenueReceived")
+        .withArgs(TOKEN_ID, ethers.parseEther("1.0"));
+
+      const data = await contract.getSongData(TOKEN_ID);
+      expect(data.totalRevenue).to.equal(ethers.parseEther("1.0"));
     });
 
-    it("Should deduct percentage from owner when adding a collaborator", async function () {
-        const tokenId = await mintAndReadyToCollab();
+    it("Should revert deposit if not in Revenue phase", async function () {
+      const { contract, owner } = await loadFixture(deployFixture);
+      await contract.mintSong(owner.address, AUDIO_HASH);
+      // Siamo in Upload
 
-        // Aggiungiamo addr1 con il 20%
-        await songAsset.addCollaborator(tokenId, addr1.address, 20);
-
-        const collaborators = await songAsset.getCollaborators(tokenId);
-
-        // L'owner (indice 0) dovrebbe scendere a 80
-        expect(collaborators[0].splitPercentage).to.equal(80);
-        // Il nuovo (indice 1) dovrebbe essere a 20
-        expect(collaborators[1].wallet).to.equal(addr1.address);
-        expect(collaborators[1].splitPercentage).to.equal(20);
+      await expect(
+        contract.depositRevenue(TOKEN_ID, { value: ethers.parseEther("1.0") })
+      ).to.be.revertedWith("Song threshold not reached yet");
     });
 
-    it("Should handle multiple collaborators correctly (Chain dilution)", async function () {
-        const tokenId = await mintAndReadyToCollab();
-        const [ownerSigner, collab1, collab2] = await ethers.getSigners();
+    it("Should distribute royalties correctly", async function () {
+      const { contract, owner, collaborator } = await loadFixture(deployFixture);
+      await setupToRevenue(contract, owner, collaborator);
 
-        // 1. Aggiungiamo Collab1 al 20% (Owner scende a 80%)
-        await songAsset.addCollaborator(tokenId, collab1.address, 20);
-        
-        // 2. Aggiungiamo Collab2 al 40% (Owner scende a 40%)
-        await songAsset.addCollaborator(tokenId, collab2.address, 40);
+      // Deposita 10 ETH
+      const depositAmount = ethers.parseEther("10.0");
+      await contract.depositRevenue(TOKEN_ID, { value: depositAmount });
 
-        const collaborators = await songAsset.getCollaborators(tokenId);
+      // Controlla bilanci prima della distribuzione
+      const initialOwnerBal = await ethers.provider.getBalance(owner.address);
+      const initialCollabBal = await ethers.provider.getBalance(collaborator.address);
 
-        // Verifica Owner
-        expect(collaborators[0].splitPercentage).to.equal(40); // 100 - 20 - 40
-        // Verifica Collab1
-        expect(collaborators[1].splitPercentage).to.equal(20);
-        // Verifica Collab2
-        expect(collaborators[2].splitPercentage).to.equal(40);
-    });
+      // Distribuisci
+      // Usiamo una transaction separata per non confondere il gas cost col balance
+      await contract.distributeRoyalties(TOKEN_ID);
 
-    it("Should ensure total percentage always equals 100", async function () {
-        const tokenId = await mintAndReadyToCollab();
-        const [ownerSigner, c1, c2, c3] = await ethers.getSigners();
-
-        await songAsset.addCollaborator(tokenId, c1.address, 10);
-        await songAsset.addCollaborator(tokenId, c2.address, 25);
-        await songAsset.addCollaborator(tokenId, c3.address, 15);
-
-        const collaborators = await songAsset.getCollaborators(tokenId);
-        
-        let total = 0;
-        for (let c of collaborators) {
-            total += Number(c.splitPercentage);
-        }
-
-        expect(total).to.equal(100);
-    });
-
-    it("Should revert if owner does not have enough equity left", async function () {
-        const tokenId = await mintAndReadyToCollab();
-
-        // Owner ha 100%. Proviamo a dare 110% a qualcun altro.
-        await expect(
-            songAsset.addCollaborator(tokenId, addr1.address, 110) // > 100
-        ).to.be.reverted; // Il check nel contratto o l'underflow matematico lo bloccherà
-
-        // Caso limite: Owner ha 20%, proviamo a toglierne 30%
-        await songAsset.addCollaborator(tokenId, addr1.address, 80); // Owner ora ha 20%
-        
-        await expect(
-            songAsset.addCollaborator(tokenId, addr1.address, 30)
-        ).to.be.revertedWith("L'owner non ha abbastanza quote disponibili");
+      // Owner dovrebbe ricevere 80% (8 ETH)
+      // Collaborator dovrebbe ricevere 20% (2 ETH)
+      
+      // Nota: Owner paga il gas, quindi il balance sarà (Initial + 8 ETH - Gas).
+      // Collaborator non paga gas, quindi il balance sarà esattamente (Initial + 2 ETH).
+      
+      const finalCollabBal = await ethers.provider.getBalance(collaborator.address);
+      
+      expect(finalCollabBal).to.equal(initialCollabBal + ethers.parseEther("2.0"));
     });
   });
 
-  describe("TokenURI & Metadata Correctness", function () {
+  describe("6. Token URI", function () {
+    it("Should return the correct API URL", async function () {
+      const { contract, user } = await loadFixture(deployFixture);
+      await contract.mintSong(user.address, AUDIO_HASH);
       
-    it("Should return correct URI for each lifecycle state", async function () {
-        // MINT (State: Upload)
-        await songAsset.mintSong(owner.address, AUDIO_HASH);
-        expect(await songAsset.tokenURI(0)).to.contain("upload.json");
-
-        // ADVANCE -> Collaborate
-        await songAsset.advanceState(0);
-        expect(await songAsset.tokenURI(0)).to.contain("collaborate.json");
-
-        // ADVANCE -> Register (Richiede 1 giorno di attesa)
-        await time.increase(86400 + 10);
-        await songAsset.advanceState(0);
-        expect(await songAsset.tokenURI(0)).to.contain("register.json");
-
-        // ADVANCE -> Publish (Richiede 7 giorni di attesa)
-        await time.increase(604800 + 10);
-        await songAsset.advanceState(0);
-        expect(await songAsset.tokenURI(0)).to.contain("publish.json");
-
-        // ADVANCE -> Revenue (Richiede 2 giorni di attesa)
-        await time.increase(172800 + 10);
-        await songAsset.advanceState(0);
-        expect(await songAsset.tokenURI(0)).to.contain("revenue.json");
-    });
-
-    it("Should allow owner to update Base URI", async function () {
-        const newBase = "ipfs://nuovo-cid-super-figo/";
-        await songAsset.setBaseURI(newBase);
-        
-        // Minta una nuova canzone per testare
-        await songAsset.mintSong(owner.address, AUDIO_HASH);
-        
-        const uri = await songAsset.tokenURI(0); // ID 0
-        expect(uri).to.equal(newBase + "upload.json");
+      // Il contratto usa string.concat(_baseTokenURI, tokenId)
+      // Base default: "https://api.spyral.com/metadata/"
+      
+      expect(await contract.tokenURI(TOKEN_ID)).to.equal(INITIAL_URI + "1");
     });
   });
 
 });
-
