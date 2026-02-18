@@ -5,7 +5,7 @@ contract MockRouter {
 
     bytes32 public lastRequestId;
 
-    fallback() external payable {
+    fallback() external {
         lastRequestId = keccak256(
             abi.encode(block.timestamp, msg.sender)
         );
