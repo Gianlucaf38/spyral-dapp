@@ -254,6 +254,35 @@ contract SongAsset is ERC721, Ownable, FunctionsClient {
 
     // --- LOGICA ORACOLO CHAINLINK ---
 
+        /// @notice Collega un ID Spotify a una canzone durante la fase di Register.
+    /// @dev Può essere chiamata solo dal proprietario del token (o indirizzo autorizzato).
+    ///      L'operazione è consentita esclusivamente nello stato `Register` per garantire
+    ///      coerenza con il flusso di pubblicazione verificato tramite Oracle.
+    ///      L'ID Spotify viene successivamente utilizzato dalla funzione
+    ///      `requestOracleCheck` per verificare la pubblicazione del brano.
+    /// @param tokenId L'ID univoco dell'NFT musicale.
+    /// @param _spotifyId L'identificativo ufficiale della traccia su Spotify (es. 22 caratteri alfanumerici).
+    function setSpotifyId(uint256 tokenId, string calldata _spotifyId) external {
+        _requireOwned(tokenId);
+
+        // Verifica autorizzazione (owner o approved)
+        address owner = ownerOf(tokenId);
+        _checkAuthorized(owner, msg.sender, tokenId);
+
+        // Consentito solo durante la fase Register
+        require(
+            _songs[tokenId].currentState == LifecycleState.Register,
+            "Spyral: Not in Register phase"
+        );
+
+        require(bytes(_spotifyId).length > 0, "Spyral: Empty Spotify ID");
+
+        _songs[tokenId].spotifyId = _spotifyId;
+
+        emit SpotifyIdSet(tokenId, _spotifyId);
+    }
+
+
     /// @notice Invia una richiesta alla rete Chainlink (DON) per eseguire uno script JavaScript off-chain.
     /// @dev Funzione "Trigger". Crea la richiesta, carica gli argomenti e salva il contesto in `_pendingRequests`.
     ///      Richiede il pagamento in LINK (gestito dalla Subscription).
