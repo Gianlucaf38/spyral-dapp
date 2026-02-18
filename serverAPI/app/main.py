@@ -28,7 +28,11 @@ LIFECYCLE_MAP = {
     4: {"name": "Revenue", "file": "revenue.jpg"}
 }
 
-contract = w3.eth.contract(address=CONTRACT_ADDRESS, abi=CONTRACT_ABI)
+contract = w3.eth.contract(
+    address=Web3.to_checksum_address(CONTRACT_ADDRESS),
+    abi=CONTRACT_ABI
+)
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -50,30 +54,37 @@ async def root():
 @app.get("/metadata/{token_id}")
 async def get_nft_metadata(token_id: int):
     try:
-        # Recupero dati dal contratto 
         song_data = contract.functions.getSongData(token_id).call()
         collaborators = contract.functions.getCollaborators(token_id).call()
 
-        # Estrazione dati dalla tupla restituita
-        title, state_index, streams, revenue, created_at, published_at = song_data
-        
-        # Mappatura dello stato e dell'immagine 
+        # unpack corretto
+        state_index = song_data[0]
+        published_at = song_data[1]
+        streams = song_data[2]
+        revenue = song_data[3]
+        audio_hash = song_data[4]
+        spotify_id = song_data[5]
+
         state_info = LIFECYCLE_MAP.get(state_index, LIFECYCLE_MAP[0])
 
-        # Costruzione del JSON finale 
         return {
-            "name": f"{title} #{token_id}",
-            "description": f"This song has reached the {state_info['name']} phase with over {streams:,} streams.",
+            "name": f"Spyral Song #{token_id}",
+            "description": f"This song is in the {state_info['name']} phase with {streams:,} streams.",
             "image": f"{IPFS_BASE_CID}/{state_info['file']}",
             "external_url": f"https://spyral.com/song/{token_id}",
             "attributes": [
                 {"trait_type": "Lifecycle State", "value": state_info["name"]},
                 {"trait_type": "Stream Count", "display_type": "number", "value": streams},
-                {"trait_type": "Revenue Generated", "value": f"{w3.from_wei(revenue, 'ether')} ETH"},
-                {"trait_type": "Created Date", "display_type": "date", "value": created_at},
+                {"trait_type": "Revenue Generated", "value": float(w3.from_wei(revenue, 'ether'))},
                 {"trait_type": "Published Date", "display_type": "date", "value": published_at},
-                {"trait_type": "Collaborators", "value": len(collaborators)} #si può espandere con i dettagli dei collaboratori se necessario
+                {"trait_type": "Spotify ID", "value": spotify_id},
+                {"trait_type": "Audio Hash", "value": Web3.to_hex(audio_hash)},
+                {"trait_type": "Collaborators", "value": len(collaborators)}
             ]
         }
+
     except Exception as e:
-        raise HTTPException(status_code=404, detail=f"Token {token_id} not found or error: {str(e)}")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Token {token_id} not found or error: {str(e)}"
+        )
