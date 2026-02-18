@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from web3 import Web3
-from abi import CONTRACT_ABI
+from .abi import CONTRACT_ABI
 import os
 
 app = FastAPI(
