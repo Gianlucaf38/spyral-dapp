@@ -2,6 +2,7 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from web3 import Web3
+from abi import CONTRACT_ABI
 import os
 
 app = FastAPI(
@@ -16,41 +17,7 @@ IPFS_BASE_CID = "ipfs://bafybeice35pax2yc3pcwjdh445g7eol7lag4z4aalpgquv6bpdjdz6m
 # Inizializzazione Web3
 w3 = Web3(Web3.HTTPProvider(RPC_URL))
 
-# ABI per le funzioni getSongData e getCollaborators
-CONTRACT_ABI = [
-    {
-        "inputs": [{"internalType": "uint256", "name": "tokenId", "type": "uint256"}],
-        "name": "getSongData",
-        "outputs": [
-            {"internalType": "string", "name": "songTitle", "type": "string"},
-            {"internalType": "enum SongAsset.LifecycleState", "name": "currentState", "type": "uint8"},
-            {"internalType": "uint256", "name": "streamCount", "type": "uint256"},
-            {"internalType": "uint256", "name": "revenueGenerated", "type": "uint256"},
-            {"internalType": "uint256", "name": "createdAt", "type": "uint256"},
-            {"internalType": "uint256", "name": "publishedAt", "type": "uint256"}
-        ],
-        "stateMutability": "view",
-        "type": "function"
-    },
-    {
-        "inputs": [{"internalType": "uint256", "name": "tokenId", "type": "uint256"}],
-        "name": "getCollaborators",
-        "outputs": [
-            {
-                "components": [
-                    {"internalType": "address payable", "name": "wallet", "type": "address"},
-                    {"internalType": "uint8", "name": "splitPercentage", "type": "uint8"},
-                    {"internalType": "string", "name": "role", "type": "string"}
-                ],
-                "internalType": "struct SongAsset.Collaborator[]",
-                "name": "",
-                "type": "tuple[]"
-            }
-        ],
-        "stateMutability": "view",
-        "type": "function"
-    }
-]
+
 
 # Mapping degli stati e delle immagini IPFS corrispondenti 
 LIFECYCLE_MAP = {
