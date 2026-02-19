@@ -6,7 +6,7 @@ describe("Spyral SongAsset (Full Suite)", function () {
   
   // Costanti utili
   const AUDIO_HASH = ethers.keccak256(ethers.toUtf8Bytes("spyral-audio-test"));
-  const INITIAL_URI = "https://api.spyral.com/metadata/";
+  const INITIAL_URI = "https://spyral-dapp-production.up.railway/metadata/";
   const TOKEN_ID = 1; // Il contatore parte da 1 nello smart contract fornito
 
   // Enums (devono corrispondere allo Smart Contract)
@@ -136,10 +136,11 @@ describe("Spyral SongAsset (Full Suite)", function () {
       await contract.mintSong(owner.address, AUDIO_HASH);
       await contract.advanceState(TOKEN_ID);
 
-      await expect(
-        contract.connect(rando).addCollaborator(TOKEN_ID, collaborator.address, 20)
-      ).to.be.revertedWith("Spyral: Only owner can add collaborators");
-    });
+     await expect(
+  	contract.connect(rando).addCollaborator(TOKEN_ID, collaborator.address, 20)
+	).to.be.revertedWithCustomError(contract, "ERC721InsufficientApproval");
+  });
+  
   });
 
   describe("4. Oracle Integration (Register -> Publish -> Revenue)", function () {
@@ -273,7 +274,7 @@ describe("Spyral SongAsset (Full Suite)", function () {
 
       await expect(
         contract.depositRevenue(TOKEN_ID, { value: ethers.parseEther("1.0") })
-      ).to.be.revertedWith("Song threshold not reached yet");
+      ).to.be.revertedWith("Spyral: Song threshold not reached yet");
     });
 
     it("Should distribute royalties correctly", async function () {
