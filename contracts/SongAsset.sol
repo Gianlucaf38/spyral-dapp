@@ -49,7 +49,7 @@ contract SongAsset is ERC721, Ownable, FunctionsClient {
     mapping(uint256 => Collaborator[]) private _collaborators;
     mapping(uint256 => uint256) private _tokenBalances;
     uint256 private _nextTokenId = 1;
-    string private _baseTokenURI = "https://api.spyral.com/metadata/";
+    string private _baseTokenURI = "https://spyral-dapp-production.up.railway/metadata/";
 
   // --- CONFIGURAZIONE CHAINLINK FUNCTIONS ---
 
