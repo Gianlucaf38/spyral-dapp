@@ -135,7 +135,7 @@ async def view_nft_modern(request: Request, token_id: int):
             "request": request,
             "token_id": token_id,
             "state_name": state_info["name"],
-            "image_url": clean_image_url,
+            "image_url": f"https://cloudflare-ipfs.com/ipfs/{raw_cid}/{filename}",
             "streams": song_data[2],
             "revenue": round(float(w3.from_wei(song_data[3], 'ether')), 4),
             "spotify_id": song_data[5] if song_data[5] else "Not Linked",
