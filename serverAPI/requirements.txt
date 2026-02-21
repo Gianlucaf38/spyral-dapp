@@ -4,3 +4,4 @@ gunicorn
 web3  
 python-dotenv
 datetime
+jinja2
