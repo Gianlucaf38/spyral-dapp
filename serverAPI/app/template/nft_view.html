@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <title>Spyral Song #{{ token_id }}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); }
+        .progress-glow { box-shadow: 0 0 15px rgba(59, 130, 246, 0.5); }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-slate-950 to-slate-900 text-white min-h-screen flex items-center justify-center p-4">
+    <div class="max-w-sm w-full glass rounded-[2.5rem] overflow-hidden shadow-2xl border border-slate-700/50">
+        
+        <div class="relative h-80">
+            <img src="{{ image_url }}" alt="NFT Image" class="w-full h-full object-cover">
+            <div class="absolute inset-0 bg-gradient-to-t from-slate-900 via-transparent to-transparent"></div>
+            <span class="absolute top-4 right-4 {{ status_color }} px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest shadow-2xl border border-white/20">
+                {{ state_name }}
+            </span>
+        </div>
+
+        <div class="px-8 pb-8 -mt-12 relative z-10">
+            <h1 class="text-4xl font-black tracking-tighter mb-1 italic">#{{ token_id }}</h1>
+            <p class="text-blue-400 font-bold text-xs uppercase tracking-widest mb-6">Spyral Collective</p>
+
+            <div class="grid grid-cols-2 gap-3 mb-6">
+                <div class="bg-slate-800/80 p-4 rounded-2xl border border-slate-700">
+                    <p class="text-slate-500 text-[10px] uppercase font-bold tracking-widest">Streams</p>
+                    <p class="text-xl font-mono font-bold">{{ streams }}</p>
+                </div>
+                <div class="bg-slate-800/80 p-4 rounded-2xl border border-slate-700">
+                    <p class="text-slate-500 text-[10px] uppercase font-bold tracking-widest">Revenue</p>
+                    <p class="text-xl font-mono font-bold text-emerald-400">{{ revenue }}Ξ</p>
+                </div>
+            </div>
+
+            <div class="space-y-4 mb-8">
+                <div class="flex items-center justify-between group">
+                    <span class="text-slate-500 text-xs font-medium uppercase">Spotify ID</span>
+                    <span class="text-xs font-mono bg-slate-700/30 px-2 py-1 rounded leading-none">{{ spotify_id or 'NOT_LINKED' }}</span>
+                </div>
+                <div class="flex items-center justify-between">
+                    <span class="text-slate-500 text-xs font-medium uppercase">Release Date</span>
+                    <span class="text-xs font-semibold">{{ pub_date }}</span>
+                </div>
+            </div>
+
+            <div class="relative pt-2">
+                <div class="flex mb-2 items-center justify-between">
+                    <div class="text-[10px] font-bold text-slate-500 uppercase tracking-tighter">Evolution Status</div>
+                    <div class="text-[10px] font-bold text-blue-400">{{ progress }}%</div>
+                </div>
+                <div class="overflow-hidden h-1.5 flex rounded bg-slate-800 border border-slate-700">
+                    <div style="width:{{ progress }}%" class="progress-glow {{ status_color }} transition-all duration-1000"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
