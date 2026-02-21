@@ -111,7 +111,8 @@ async def get_nft_metadata(token_id: int):
         )
     
 
-templates = Jinja2Templates(directory="templates")
+current_dir = os.path.dirname(os.path.realpath(__file__))
+templates = Jinja2Templates(directory=os.path.join(current_dir, "templates"))
 
 @app.get("/view/{token_id}", response_class=HTMLResponse)
 async def view_nft_modern(request: Request, token_id: int):
