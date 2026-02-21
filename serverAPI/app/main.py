@@ -57,7 +57,7 @@ async def get_nft_metadata(token_id: int):
         song_data = contract.functions.getSongData(token_id).call()
         collaborators = contract.functions.getCollaborators(token_id).call()
 
-        # unpack corretto
+        # Unpack dei dati dal contratto
         state_index = song_data[0]
         published_at = song_data[1]
         streams = song_data[2]
@@ -66,22 +66,41 @@ async def get_nft_metadata(token_id: int):
         spotify_id = song_data[5]
 
         state_info = LIFECYCLE_MAP.get(state_index, LIFECYCLE_MAP[0])
-
-        return {
+        
+        # 1. Costruzione base dei metadati
+        metadata = {
             "name": f"Spyral Song #{token_id}",
-            "description": f"This song is in the {state_info['name']} phase with {streams:,} streams.",
+            "description": f"This song is currently in the {state_info['name']} phase.",
             "image": f"{IPFS_BASE_CID}/{state_info['file']}",
             "external_url": f"https://spyral.com/song/{token_id}",
             "attributes": [
-                {"trait_type": "Lifecycle State", "value": state_info["name"]},
-                {"trait_type": "Stream Count", "display_type": "number", "value": streams},
-                {"trait_type": "Revenue Generated", "value": float(w3.from_wei(revenue, 'ether'))},
-                {"trait_type": "Published Date", "display_type": "date", "value": published_at},
-                {"trait_type": "Spotify ID", "value": spotify_id},
-                {"trait_type": "Audio Hash", "value": Web3.to_hex(audio_hash)},
-                {"trait_type": "Collaborators", "value": len(collaborators)}
+                {"trait_type": "Lifecycle State", "value": state_info["name"]}
             ]
         }
+
+        # 2. Aggiunta dinamica degli attributi in base allo stato (state_index)
+        # Stato 0: Upload (mostriamo solo l'hash audio se presente)
+        if state_index >= 0:
+            if audio_hash and any(b != 0 for b in audio_hash):
+                metadata["attributes"].append({"trait_type": "Audio Hash", "value": Web3.to_hex(audio_hash)})
+
+        # Stato 1: Collaborate
+        if state_index >= 1:
+            metadata["attributes"].append({"trait_type": "Collaborators", "value": len(collaborators)})
+
+        # Stato 2 e 3: Register & Publish
+        if state_index >= 2:
+            if spotify_id and spotify_id != "":
+                metadata["attributes"].append({"trait_type": "Spotify ID", "value": spotify_id})
+            if published_at > 0:
+                metadata["attributes"].append({"trait_type": "Published Date", "display_type": "date", "value": published_at})
+
+        # Stato 4: Revenue
+        if state_index >= 4:
+            metadata["attributes"].append({"trait_type": "Stream Count", "display_type": "number", "value": streams})
+            metadata["attributes"].append({"trait_type": "Revenue Generated", "value": float(w3.from_wei(revenue, 'ether'))})
+
+        return metadata
 
     except Exception as e:
         raise HTTPException(
