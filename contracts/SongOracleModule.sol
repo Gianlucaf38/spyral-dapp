@@ -45,20 +45,25 @@ abstract contract SongOracleModule is FunctionsClient, SongLifecycleModule{
         gasLimit = _gasLimit;
     }
     
-     /// @notice Invia una richiesta alla rete Chainlink (DON) per eseguire uno script JavaScript off-chain.
+    /// @notice Invia una richiesta alla rete Chainlink (DON) per eseguire uno script JavaScript off-chain.
     /// @dev Funzione "Trigger". Crea la richiesta, carica gli argomenti e salva il contesto in `_pendingRequests`.
     ///      Richiede il pagamento in LINK (gestito dalla Subscription).
     /// @param tokenId L'ID del token per cui si richiede la verifica.
     /// @param reqType Il tipo di operazione: 0 per verifica pubblicazione, 1 per aggiornamento stream.
     /// @param source Il codice sorgente JavaScript (come stringa) che i nodi Chainlink eseguiranno.
     /// @return requestId L'ID univoco della richiesta generato dal coordinatore Chainlink.
-    function requestOracleCheck(uint256 tokenId, RequestType reqType, string calldata source) public onlyOwner returns (bytes32 requestId) {
-        _requireOwned(tokenId);
+    function requestOracleCheck(uint256 tokenId, RequestType reqType, string calldata source) public returns (bytes32 requestId) {
+        address owner = ownerOf(tokenId);
+        _checkAuthorized(owner, msg.sender, tokenId);
         
         // Validazione specifica per la pubblicazione
         if (reqType == RequestType.CHECK_PUBLICATION) {
             require(_songs[tokenId].currentState == LifecycleState.Register, "Spyral: Not ready to publish");
             require(bytes(_songs[tokenId].spotifyId).length > 0, "Spyral: Spotify ID missing");
+        }
+
+        if (reqType == RequestType.UPDATE_STREAMS) {
+            require(_songs[tokenId].currentState == LifecycleState.Publish, "Spyral: Song not published");
         }
 
         // Preparazione della richiesta (Functions v1)

@@ -44,10 +44,10 @@ abstract contract SongStorage {
 
     mapping(uint256 => Song) internal _songs;
     mapping(uint256 => Collaborator[]) internal _collaborators;
-    mapping(uint256 => uint256) internal _tokenBalances;
+    mapping(uint256 => uint256) internal _tokenBalances; /****************CHECK SENSATEZZA, ABBIAMO GIÀ TOTAL REVENUE DEL TOKEN*************************** */
     
     uint256 internal _nextTokenId = 1;
-    string internal _baseTokenURI = "https://spyral-dapp-production.up.railway/metadata/";
+    string internal _baseTokenURI = "https://spyral-dapp-production.up.railway.app/metadata/";
     
     // --- EVENTI ---
 
@@ -58,8 +58,8 @@ abstract contract SongStorage {
     event StreamCountUpdated(uint256 indexed tokenId, uint128 newCount); 
 
     /// @notice Emesso quando il contratto riceve fondi (revenue) per una canzone.
-    event RevenueReceived(uint256 indexed tokenId, uint256 amount);
-
+    event RevenueReceived(uint256 indexed tokenId,address payer, uint256 amount);
+ 
     /// @notice Emesso quando le royalties vengono distribuite ai collaboratori.
     event RoyaltiesDistributed(uint256 indexed tokenId, uint256 totalAmount);
 

@@ -14,11 +14,7 @@ abstract contract SongRoyaltiesModule is SongOracleModule {
     ///      Se lo stato non è `Revenue`, la transazione viene rifiutata (Revert) per proteggere i pagatori.
     /// @param tokenId L'ID della canzone che ha generato il guadagno.
     function depositRevenue(uint256 tokenId) public payable {
-        _requireOwned(tokenId);
         require(msg.value > 0, "Spyral: No value sent");
-        
-        // IL BLOCCO SOGLIA: Il cuore della tokenomics condizionale
-        // Se provi a pagare una canzone con <1000 stream, i soldi tornano indietro.
         require(_songs[tokenId].currentState == LifecycleState.Revenue, "Spyral: Song threshold not reached yet");
         
         // Aggiorna lo storico totale (non diminuisce mai)
@@ -26,7 +22,7 @@ abstract contract SongRoyaltiesModule is SongOracleModule {
         // Aggiorna il bilancio prelevabile attuale (diminuisce quando si distribuisce)
         _tokenBalances[tokenId] += msg.value;
         
-        emit RevenueReceived(tokenId, msg.value);
+        emit RevenueReceived(tokenId, msg.sender,msg.value);
     }
 
     /// @notice Distribuisce i fondi accumulati a tutti i collaboratori in base alle loro percentuali.
@@ -43,9 +39,8 @@ abstract contract SongRoyaltiesModule is SongOracleModule {
         if (msg.value > 0) {
             _songs[tokenId].totalRevenue += uint128(msg.value);
             _tokenBalances[tokenId] += msg.value;
-            emit RevenueReceived(tokenId, msg.value);
+            emit RevenueReceived(tokenId, msg.sender,msg.value);
         }
-
         // Snapshot del bilancio attuale
         uint256 amountToDistribute = _tokenBalances[tokenId];
         require(amountToDistribute > 0, "Spyral: No funds to distribute");
