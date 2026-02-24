@@ -1,54 +1,63 @@
-# 🎵 Spyral – Song Asset dApp
+# 🎵 Spyral – Modular Song Asset dApp
 
-## 1. Project Overview
-
-**Spyral** is a modular blockchain-based decentralized application (dApp) designed to manage the lifecycle of a musical asset represented as an NFT.
-
-Each song is minted as a dynamic on-chain asset and progresses through a structured lifecycle:
-
-1. Upload  
-2. Collaborate  
-3. Register  
-4. Publish  
-5. Revenue Distribution  
-
-The system integrates:
-
-- Smart contracts deployed on **Base Sepolia**
-- **Chainlink Functions** for off-chain data verification (Spotify & streaming data)
-- **IPFS** for decentralized metadata storage
-- An external **FastAPI server** to dynamically generate NFT metadata
-- A frontend interface for interaction
-- OpenSea compatibility for marketplace visibility
-
-The project demonstrates how blockchain can be used to:
-
-- Coordinate multiple collaborators  
-- Verify external publishing status  
-- Track streaming thresholds  
-- Enable transparent revenue splitting  
+<p align="center">
+  <img src="https://img.shields.io/badge/Solidity-0.8.x-363636?style=for-the-badge&logo=solidity" />
+  <img src="https://img.shields.io/badge/Hardhat-Development-F7DF1E?style=for-the-badge&logo=ethereum" />
+  <img src="https://img.shields.io/badge/Base-Sepolia-0052FF?style=for-the-badge&logo=ethereum" />
+  <img src="https://img.shields.io/badge/Chainlink-Functions-2A5ADA?style=for-the-badge&logo=chainlink" />
+  <img src="https://img.shields.io/badge/IPFS-Decentralized-65C2CB?style=for-the-badge&logo=ipfs" />
+  <img src="https://img.shields.io/badge/FastAPI-Backend-009688?style=for-the-badge&logo=fastapi" />
+  <img src="https://img.shields.io/badge/Node.js-Environment-339933?style=for-the-badge&logo=node.js" />
+  <img src="https://img.shields.io/badge/Docker-Containerized-2496ED?style=for-the-badge&logo=docker" />
+</p>
 
 ---
 
-## 2. Technology Stack
+## 📖 Overview
+
+**Spyral** is a modular Web3 architecture designed to manage the lifecycle of a musical asset represented as a dynamic NFT.
+
+Each song is minted on-chain and progresses through a structured lifecycle:
+
+1. **Upload**
+2. **Collaborate**
+3. **Register**
+4. **Publish**
+5. **Revenue Distribution**
+
+The project demonstrates how blockchain can coordinate multi-party ownership, enforce deterministic state transitions, verify external publication via oracle infrastructure, and distribute revenue trustlessly.
+
+It integrates:
+
+- Smart contracts deployed on **Base Sepolia**
+- **Chainlink Functions** for off-chain verification (Spotify + stream data)
+- **IPFS** for decentralized metadata
+- External **FastAPI server** for dynamic NFT metadata
+- Web3 frontend interaction
+- OpenSea marketplace compatibility
+
+---
+
+## 🧱 Technology Stack
 
 | Technology | Description |
 |------------|-------------|
 | Solidity | Smart contract language used to implement SongAsset and modular logic |
-| Hardhat | Development framework for compiling, testing, and deploying contracts |
+| Node.js | JavaScript runtime used for Hardhat, scripts, and development tooling |
+| Hardhat | Ethereum development framework for compiling, testing, deploying |
 | Base Sepolia | Ethereum-compatible testnet where contracts are deployed |
-| Chainlink Functions | Used as decentralized oracle to fetch Spotify publication and stream data |
-| IPFS | Decentralized storage for NFT metadata JSON |
-| FastAPI | Python backend used to dynamically build and serve NFT metadata |
-| Python | Backend logic for API server and Web3 interaction |
-| Docker | Containerization of the API server |
-| Railway | Deployment platform for hosting the API server |
-| OpenSea | NFT marketplace used to visualize the minted Song Assets |
-| Wagmi / RainbowKit | Web3 frontend interaction and wallet connection |
+| Chainlink Functions | Decentralized oracle network for Spotify and stream data |
+| IPFS | Decentralized storage layer for NFT metadata |
+| FastAPI | Python backend for dynamic metadata generation |
+| Python | Backend logic and Web3 interaction |
+| Docker | API server containerization |
+| Railway | Cloud deployment platform for API hosting |
+| OpenSea | NFT marketplace integration |
+| Wagmi / RainbowKit | Web3 wallet connection and frontend interaction |
 
 ---
 
-## 3. Repository Structure
+## 🏗 Repository Structure
 
 ```
 spyral-dapp/
@@ -73,246 +82,207 @@ spyral-dapp/
 │   └── Dockerfile
 │
 ├── frontend/
-│   └── (React / Next.js application)
+│   └── (React / Next.js dApp)
 │
 └── hardhat.config.js
 ```
 
 ---
 
-## 4. Smart Contract Architecture & Main Functions
+## 🧠 Smart Contract Architecture
 
-The architecture follows a **modular inheritance design**.
+The system follows a **modular inheritance pattern**, separating responsibilities across multiple layers.
 
-### 4.1 SongStorage.sol
+### 1️⃣ SongStorage.sol
 
-Responsible for persistent storage structures.
+Pure storage layer.
 
 Contains:
 
-- Song struct definition  
-- Mapping `tokenId → Song`  
-- Mapping for collaborators  
-- Stream count  
-- Spotify ID  
-- Revenue balances  
+- `Song` struct
+- `mapping(uint256 => Song)`
+- Collaborator mappings
+- Stream count
+- Spotify ID
+- Revenue balances
 
-This contract contains no business logic, only state variables.
-
----
-
-### 4.2 SongLifecycleManagement.sol
-
-Implements the finite state machine of a song.
-
-Main responsibilities:
-
-- Define lifecycle states (Upload → Collaborate → Register → Publish → Revenue)  
-- `advanceState(uint256 tokenId)`  
-- Validate allowed transitions  
-- Enforce role permissions  
-
-This ensures controlled progression of the asset.
+No business logic — only state.
 
 ---
 
-### 4.3 SongOracleModule.sol
+### 2️⃣ SongLifecycleManagement.sol
 
-Handles interaction with Chainlink Functions.
+Implements the lifecycle state machine.
 
-Main responsibilities:
+- Defines states (Upload → Collaborate → Register → Publish → Revenue)
+- `advanceState(uint256 tokenId)`
+- Transition validation
+- Role enforcement
 
-- Send request to Chainlink Router  
-- Store pending request context  
-- Handle `fulfillRequest(...)`  
-- Update:
-  - Spotify publication status  
-  - Stream count  
-
-This module bridges on-chain logic with off-chain data.
+Ensures deterministic and secure progression.
 
 ---
 
-### 4.4 SongRoyaltiesModule.sol
+### 3️⃣ SongOracleModule.sol
 
-Manages revenue splitting and withdrawals.
+Handles Chainlink Functions integration.
 
-Main responsibilities:
+- Sends request to Chainlink Router
+- Stores pending request context
+- Implements `fulfillRequest(...)`
+- Updates:
+  - Spotify publication status
+  - Stream count
 
-- Store collaborator percentages  
-- Allow revenue deposit  
-- Split revenue proportionally  
-- Allow collaborators to withdraw  
-
-Implements trustless revenue sharing logic.
-
----
-
-### 4.5 SongAsset.sol
-
-Final contract inheriting all modules.
-
-Responsibilities:
-
-- ERC721 implementation  
-- `mintSong(address to, bytes32 audioHash)`  
-- Integrates storage, lifecycle, oracle, and royalties logic  
-
-This is the main deployed contract.
+Bridges on-chain and off-chain worlds.
 
 ---
 
-## 5. Storage Model (On-Chain vs IPFS)
+### 4️⃣ SongRoyaltiesModule.sol
 
-### On-Chain (Base Sepolia)
+Implements trustless revenue splitting.
 
-Stored directly inside smart contract storage:
+- Stores collaborator percentages
+- Accepts revenue deposits
+- Splits funds proportionally
+- Enables withdrawals
 
-- Song lifecycle state  
-- Collaborators and percentages  
-- Spotify ID  
-- Stream count  
-- Revenue balances  
-- Audio hash reference  
-- Token ownership (ERC721)  
-
-Why on-chain?
-
-- Trustless state management  
-- Deterministic lifecycle enforcement  
-- Transparent royalty logic  
+No intermediary required.
 
 ---
 
-### IPFS
+### 5️⃣ SongAsset.sol
 
-Stored off-chain:
+Final contract combining all modules.
 
-- NFT Metadata JSON  
-- Image references (if any)  
+- ERC721 implementation
+- `mintSong(address to, bytes32 audioHash)`
+- Integrates storage, lifecycle, oracle, royalties
 
-Metadata is dynamically generated by the external API and can include:
-
-- Current lifecycle state  
-- Stream milestone  
-- Publication status  
-
-IPFS ensures:
-
-- Decentralized storage  
-- Marketplace compatibility  
-- Immutable metadata references  
+Main deployed contract on Base Sepolia.
 
 ---
 
-## 6. External API Server Architecture
+## 💾 Storage Model
 
-The API server is implemented using:
+### 🔹 On-Chain (Base Sepolia)
 
-- Python  
-- FastAPI  
-- Web3.py  
-- Docker  
-- Railway  
+Stored in contract storage:
 
-### GET Flow: `/spyral/metadata/{tokenId}`
+- Lifecycle state
+- Collaborators & percentages
+- Spotify ID
+- Stream count
+- Revenue balances
+- Audio hash
+- Token ownership
 
-1. Receive GET request  
-2. Validate token existence  
-3. Query smart contract via Web3:
-   - `getSongData(tokenId)`  
-   - `getCollaborators(tokenId)`  
-4. Unpack on-chain data  
-5. Dynamically build JSON metadata  
-6. Return formatted JSON (HTTP 200)  
-
-If token not found → return 404.
-
-This enables:
-
-- Dynamic NFT metadata  
-- Marketplace refresh  
-- Off-chain JSON formatting with on-chain data integrity  
+Provides immutability and trustless coordination.
 
 ---
 
-## 7. Lifecycle Flow Summary
+### 🔹 IPFS (Off-Chain)
 
-### Upload
+Stored:
 
-- Artist calls `mintSong`  
-- Initial state: Upload  
+- NFT Metadata JSON
+- Optional images
 
-### Collaborate
-
-- Add collaborators  
-- Define revenue splits  
-- Advance state  
-
-### Register
-
-- Set Spotify ID  
-- Chainlink verifies publication  
-
-### Publish
-
-- Chainlink retrieves stream count  
-- If threshold met → asset becomes monetizable  
-
-### Revenue
-
-- Users deposit funds  
-- Owner splits revenue  
-- Collaborators withdraw  
+Metadata is dynamically generated by the FastAPI server and reflects real-time on-chain state.
 
 ---
 
-## 8. Oracle Flow (Chainlink)
+## 🌐 External API Server
 
-1. Smart contract sends request to Chainlink Router  
+Implemented using:
+
+- Python
+- FastAPI
+- Web3.py
+- Docker
+- Railway deployment
+
+### Endpoint
+
+```
+GET /spyral/metadata/{tokenId}
+```
+
+Flow:
+
+1. Validate token existence
+2. Query contract:
+   - `getSongData(tokenId)`
+   - `getCollaborators(tokenId)`
+3. Unpack on-chain data
+4. Build dynamic JSON metadata
+5. Return HTTP 200
+
+Returns 404 if token does not exist.
+
+Enables dynamic NFT rendering on marketplaces.
+
+---
+
+## 🔗 Oracle Flow (Chainlink Functions)
+
+1. Contract sends request to Chainlink Router  
 2. Router forwards to DON  
-3. Off-chain JavaScript fetches Spotify data  
+3. Off-chain JS fetches Spotify data  
 4. DON returns response  
-5. `fulfillRequest()` updates contract state  
+5. `fulfillRequest()` updates contract  
 
-This follows a **pull-based oracle pattern** triggered by contract logic.
-
----
-
-## 9. Why Blockchain Here?
-
-Compared to a traditional client-server architecture:
-
-- State transitions are immutable  
-- Revenue splits are trustless  
-- Collaborator permissions are enforced on-chain  
-- Oracle responses are verifiable  
-- No central authority controls payout logic  
+Implements a **pull-based oracle pattern**.
 
 ---
 
-## 10. Potential Improvements
+## 💸 Revenue Logic
 
-- Event indexing strategy for frontend efficiency  
-- Upgradeability pattern (Proxy pattern not implemented)  
-- Gas optimization review  
-- More granular access control (Ownable vs Role-based)  
-- Automated metadata pinning strategy  
-- Better error handling for oracle failures  
-- Production deployment documentation  
-- CI/CD pipeline documentation  
+Once publishing and streaming conditions are met:
+
+- Anyone can deposit revenue
+- Owner triggers split
+- Collaborators withdraw their share
+
+Fully on-chain and deterministic.
 
 ---
 
-## 11. Conclusion
+## 🚀 Why Blockchain?
 
-Spyral demonstrates a full-stack Web3 architecture integrating:
+Compared to traditional client-server systems:
 
-- Modular Solidity contracts  
-- Chainlink oracle logic  
-- Dynamic NFT metadata  
-- Off-chain API orchestration  
-- Decentralized storage  
-- Trustless revenue distribution  
+- Immutable lifecycle transitions  
+- Trustless multi-party revenue splitting  
+- Transparent collaboration  
+- Verifiable oracle responses  
+- No centralized payout authority  
 
-It is designed as an academic yet production-structured example of how blockchain can coordinate digital music assets in a decentralized way.
+---
+
+## 🔒 Potential Improvements
+
+- Upgradeable proxy pattern
+- Advanced role-based access control
+- Event indexing optimization
+- Oracle retry & fallback strategy
+- Automated IPFS pinning workflow
+- Production-grade CI/CD pipeline
+- Gas optimization audit
+
+---
+
+## 📌 Conclusion
+
+Spyral is a full-stack Web3 architecture combining:
+
+- Modular Solidity contracts
+- Chainlink oracle infrastructure
+- Dynamic NFT metadata
+- Off-chain API orchestration
+- Decentralized storage
+- Trustless royalty distribution
+
+Designed as an academically rigorous yet production-structured Web3 system.
+
+---
